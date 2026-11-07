@@ -215,15 +215,8 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
 
     ssl_enabled = str(polaris_env.get("polaris_ssl_enabled", "false")).strip().lower() == "true"
 
-    # Tokens and client secrets travel on every call: with Kerberos or OIDC, Polaris, MCP and Console serve TLS.
-    if get_polaris_security_modes(configurations, services):
-      ssl_enabled = True
-      put_polaris_env("polaris_ssl_enabled", "true")
-      put_polaris_env("polaris_mcp_tls_enabled", "true")
-      put_polaris_env("polaris_console_tls_enabled", "true")
-
-    # The TLS material (stores, PEM files, passwords) is the operator's to enter: nothing is recommended
-    # for it, and the validators require it when TLS is enabled.
+    # TLS stays as the operator set it (off by default, so a trial needs no TLS material): with Kerberos or
+    # OIDC, the validator reports an error until it is enabled. The TLS material defaults to the cluster stores.
     if "polaris_mcp_tls_enabled" not in polaris_env:
       put_polaris_env("polaris_mcp_tls_enabled", "true" if ssl_enabled else "false")
     if "polaris_console_tls_enabled" not in polaris_env:
@@ -265,37 +258,8 @@ class PolarisRecommender(service_advisor.ServiceAdvisor):
       # Polaris TLS is disabled.
       self._recommendPolarisTlsStoreDefaults(app_props, put_app_props)
 
-    self._recommendPolarisTlsVisibility(configurations, services)
-
-  def _recommendPolarisTlsVisibility(self, configurations, services):
-    """The TLS material is required (empty-value-valid false) where its TLS is enabled, and hidden elsewhere: Ambari
-    neither shows nor requires a hidden property."""
-    def enabled(name):
-      # the recommended value, else the current one (the recommendations only hold what they changed)
-      return str(self._get_property(configurations, services, "polaris-env", name) or "false").strip().lower() == "true"
-
-    put_env_attr = self.putPropertyAttribute(configurations, "polaris-env")
-    put_app_attr = self.putPropertyAttribute(configurations, "polaris-application-properties")
-    put_ssl_attr = self.putPropertyAttribute(configurations, "ranger-polaris-policymgr-ssl")
-    ssl = "true" if enabled("polaris_ssl_enabled") else "false"
-    mcp = "true" if enabled("polaris_mcp_tls_enabled") else "false"
-    console = "true" if enabled("polaris_console_tls_enabled") else "false"
-    for name in ("polaris_ssl_keystore_password", "polaris_ssl_key_password", "polaris_ssl_truststore_password"):
-      put_env_attr(name, "visible", ssl)
-    for name in ("quarkus.http.ssl.certificate.key-store-file", "quarkus.http.ssl.certificate.trust-store-file"):
-      put_app_attr(name, "visible", ssl)
-    for name in ("polaris_mcp_tls_cert_file", "polaris_mcp_tls_key_file", "polaris_mcp_tls_ca_file"):
-      put_env_attr(name, "visible", mcp)
-    for name in ("polaris_console_tls_cert_file", "polaris_console_tls_key_file"):
-      put_env_attr(name, "visible", console)
-    # the plugin truststore holds the Ranger Admin certificate: needed when Ranger Admin uses HTTPS
-    ranger_https = self._is_ranger_plugin_enabled(configurations, services) and str(
-      self._get_property(configurations, services, "admin-properties", "policymgr_external_url") or "").strip().lower().startswith("https://")
-    for name in ("xasecure.policymgr.clientssl.truststore", "xasecure.policymgr.clientssl.truststore.password"):
-      put_ssl_attr(name, "visible", "true" if ranger_https else "false")
-
   def _recommendPolarisTlsStoreDefaults(self, app_props, put_app_props):
-    # Only the store types: the store files are the operator's to enter. Without a key alias, Quarkus uses
+    # Only the store types: the store files come with the configuration. Without a key alias, Quarkus uses
     # the only key entry of the keystore.
     defaults = (
       ("quarkus.http.ssl.certificate.key-store-file-type", "JKS"),
@@ -849,11 +813,11 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
         "item": self.getErrorItem("polaris_ssl_enabled should be true when polaris_protocol=https")
       })
 
-    # The TLS material is entered by the operator (no default store nor password)
+    # The TLS material defaults to the cluster stores: an operator emptying it gets an error, not a failed start.
+    # Without a key password Quarkus uses the keystore password.
     required = []
     if ssl_enabled:
       required += [("polaris_ssl_keystore_password", "the password of the TLS keystore"),
-                   ("polaris_ssl_key_password", "the password of the key in the TLS keystore"),
                    ("polaris_ssl_truststore_password", "the password of the TLS truststore")]
     if str(properties.get("polaris_mcp_tls_enabled", "false")).strip().lower() == "true":
       required += [("polaris_mcp_tls_cert_file", "the PEM certificate of the MCP server"),

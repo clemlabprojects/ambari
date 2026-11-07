@@ -90,10 +90,10 @@
   <property>
     <name>quarkus.http.ssl.certificate.key-store-file</name>
     <display-name>TLS Keystore File</display-name>
-    <value></value>
+    <value>/etc/security/serverKeys/keystore.jks</value>
     <description>Absolute path to the server TLS keystore file (PKCS12/JKS). Required when TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -134,10 +134,10 @@
   <property>
     <name>quarkus.http.ssl.certificate.trust-store-file</name>
     <display-name>TLS Truststore File</display-name>
-    <value></value>
+    <value>/etc/security/serverKeys/truststore.jks</value>
     <description>Absolute path to the TLS truststore file used to validate client/peer certificates. Required when TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>

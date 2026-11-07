@@ -1034,17 +1034,17 @@ class TestAmoroSecurity(unittest.TestCase):
     self.assertEqual([], modes({}, self.services()))
     self.assertEqual(["Kerberos", "OIDC"], modes({}, self.services("true", True)))
 
-  def test_tls_is_recommended_and_required(self):
+  def test_tls_is_required_but_left_to_the_operator(self):
     services = self.services(kerberos="true")
     configurations = {}
     self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
-    self.assertEqual("true", configurations["amoro-site"]["properties"]["http-server.ssl.enabled"])
+    self.assertNotIn("http-server.ssl.enabled", configurations["amoro-site"]["properties"])
     items = self.advisor.AmoroValidator().validateAmoroSiteProperties(
       {"admin-password": "x", "http-server.ssl.enabled": "false"}, {}, services["configurations"], services, self.HOSTS)
     self.assertIn(("http-server.ssl.enabled", "ERROR"), [(i["config-name"], i["level"]) for i in items])
 
   def test_tls_material_is_entered_by_the_operator(self):
-    # until auto-TLS: no default store nor password, and the truststore is required with the dashboard TLS
+    # until auto-TLS: the stores come from the definitions, nothing is recommended; required with the dashboard TLS
     services = self.services(kerberos="true")
     configurations = {}
     self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
@@ -1057,19 +1057,13 @@ class TestAmoroSecurity(unittest.TestCase):
       services["configurations"]["amoro-site"] = {"properties": {"http-server.ssl.enabled": ssl_enabled}}
       items = self.advisor.AmoroValidator().validateAmoroEnvProperties(env, {}, services["configurations"], services, self.HOSTS)
       return sorted(i["config-name"] for i in items if i["level"] == "ERROR" and i["config-name"].startswith("amoro_truststore"))
-    self.assertEqual(["amoro_truststore_password", "amoro_truststore_path"], errors({}, "true"))
+    self.assertEqual(["amoro_truststore_path"], errors({}, "true"))
+    # a JKS truststore is read without its password, a PKCS12 one needs it
+    self.assertEqual([], errors({"amoro_truststore_path": "/tls/truststore.jks", "amoro_truststore_type": "JKS"}, "true"))
+    self.assertEqual(["amoro_truststore_password"],
+                     errors({"amoro_truststore_path": "/tls/truststore.p12", "amoro_truststore_type": "PKCS12"}, "true"))
     self.assertEqual([], errors({"amoro_truststore_path": "/tls/truststore.jks", "amoro_truststore_password": "x"}, "true"))
     self.assertEqual([], errors({}, "false"))
-
-  def test_tls_material_is_shown_and_required_only_with_the_dashboard_tls(self):
-    def visible(services):
-      configurations = {}
-      self.advisor.AmoroRecommender().recommendAmoroConfigurations(configurations, {}, services, self.HOSTS)
-      return dict((name, values["visible"]) for site in ("amoro-site", "amoro-env")
-                  for name, values in configurations.get(site, {}).get("property_attributes", {}).items() if "visible" in values)
-    self.assertEqual({"http-server.ssl.keystore-path": "true", "http-server.ssl.keystore-password": "true",
-                      "amoro_truststore_path": "true", "amoro_truststore_password": "true"}, visible(self.services(kerberos="true")))
-    self.assertEqual({"false"}, set(visible(self.services()).values()))
 
   def test_kerberos_without_oidc_warns_about_the_polaris_credential(self):
     def warnings(services):

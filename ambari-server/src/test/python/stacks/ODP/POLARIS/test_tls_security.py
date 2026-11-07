@@ -20,6 +20,7 @@ import importlib.util
 import sys
 from pathlib import Path
 import unittest
+from xml.etree import ElementTree
 
 
 RESOURCES = Path(__file__).resolve().parents[5] / "main/resources"
@@ -76,26 +77,35 @@ class TestPolarisTlsSecurity(unittest.TestCase):
                                                                          "polaris_mcp_tls_enabled": "true",
                                                                          "polaris_console_tls_enabled": "true"})))
 
-  def test_tls_is_recommended_with_kerberos(self):
+  def test_tls_stays_off_with_kerberos(self):
+    # a trial needs no TLS material: the advisor leaves TLS off, the validator reports it as an error
     services = self.services("true", "internal")
     configurations = {}
     self.advisor.PolarisRecommender().recommendPolarisTlsConfigurations(configurations, services)
-    env = configurations["polaris-env"]["properties"]
-    self.assertEqual(("true", "true", "true"), (env["polaris_ssl_enabled"], env["polaris_mcp_tls_enabled"], env["polaris_console_tls_enabled"]))
-    self.assertEqual("https", env["polaris_protocol"])
+    env = dict(services["configurations"]["polaris-env"]["properties"], **configurations["polaris-env"]["properties"])
+    self.assertEqual(("false", "false", "false"), (env.get("polaris_ssl_enabled", "false"), env.get("polaris_mcp_tls_enabled", "false"),
+                                                   env.get("polaris_console_tls_enabled", "false")))
+    self.assertNotEqual("https", env.get("polaris_protocol"))
+    self.assertEqual(["polaris_console_tls_enabled", "polaris_mcp_tls_enabled", "polaris_ssl_enabled"], self.tls_errors(services))
 
-  def test_tls_material_is_not_recommended(self):
-    # until auto-TLS, the operator enters the stores, PEM files and passwords
-    services = self.services("true", "internal")
-    configurations = {}
-    self.advisor.PolarisRecommender().recommendPolarisTlsConfigurations(configurations, services)
-    recommended = dict(configurations["polaris-env"]["properties"],
-                       **configurations.get("polaris-application-properties", {}).get("properties", {}))
-    for name in ("polaris_ssl_keystore_password", "polaris_ssl_truststore_password", "polaris_ssl_key_password",
-                 "polaris_mcp_tls_cert_file", "polaris_mcp_tls_key_file", "polaris_console_tls_cert_file",
-                 "polaris_console_tls_key_file", "quarkus.http.ssl.certificate.key-store-file",
-                 "quarkus.http.ssl.certificate.trust-store-file"):
-      self.assertNotIn(name, recommended)
+  def test_tls_material_defaults_to_the_cluster_stores(self):
+    defaults = {}
+    for site in ("polaris-env", "polaris-application-properties", "ranger-polaris-policymgr-ssl"):
+      root = ElementTree.parse(str(RESOURCES / "stacks/ODP/1.3/services/POLARIS/configuration" / (site + ".xml"))).getroot()
+      for prop in root.findall("property"):
+        defaults[prop.findtext("name")] = (prop.findtext("value") or "", prop.findtext("value-attributes/empty-value-valid"))
+    for name, value in (("quarkus.http.ssl.certificate.key-store-file", "/etc/security/serverKeys/keystore.jks"),
+                        ("quarkus.http.ssl.certificate.trust-store-file", "/etc/security/serverKeys/truststore.jks"),
+                        ("polaris_ssl_keystore_password", "changeit"), ("polaris_ssl_truststore_password", "changeit"),
+                        ("polaris_ssl_key_password", ""),
+                        ("polaris_mcp_tls_cert_file", "/etc/security/serverKeys/certificate.cert.pem"),
+                        ("polaris_mcp_tls_key_file", "/etc/security/serverKeys/certificate.key.pem"),
+                        ("polaris_console_tls_cert_file", "/etc/security/serverKeys/certificate.cert.pem"),
+                        ("polaris_console_tls_key_file", "/etc/security/serverKeys/certificate.key.pem"),
+                        ("xasecure.policymgr.clientssl.truststore", "/etc/security/serverKeys/truststore.jks"),
+                        ("xasecure.policymgr.clientssl.truststore.password", "changeit")):
+      # never required by the definitions: Ambari cannot hide the TLS material when TLS is off
+      self.assertEqual((value, "true"), defaults[name], name)
 
   TLS_ON = {"polaris_ssl_enabled": "true", "polaris_protocol": "https", "polaris_mcp_tls_enabled": "true",
             "polaris_console_tls_enabled": "true"}
@@ -115,7 +125,8 @@ class TestPolarisTlsSecurity(unittest.TestCase):
     return sorted(item["config-name"] for item in items if item["level"] == "ERROR" and "enter" in item["message"])
 
   def test_tls_material_is_required_when_tls_is_enabled(self):
-    self.assertEqual(sorted(list(self.TLS_MATERIAL) + ["quarkus.http.ssl.certificate.key-store-file",
+    # without a key password Quarkus uses the keystore password
+    self.assertEqual(sorted([name for name in self.TLS_MATERIAL if name != "polaris_ssl_key_password"] + ["quarkus.http.ssl.certificate.key-store-file",
                                                        "quarkus.http.ssl.certificate.trust-store-file"]),
                      self.material_errors(dict(self.TLS_ON), {}))
     self.assertEqual([], self.material_errors(dict(self.TLS_ON, **self.TLS_MATERIAL),
@@ -155,44 +166,6 @@ class TestPolarisTlsSecurity(unittest.TestCase):
     self.assertEqual(["db_root_password"], errors({"create_db_dbuser": "true", "db_root_user": "postgres"}))
     self.assertEqual([], errors({"create_db_dbuser": "true", "db_root_user": "postgres", "db_root_password": "x"}))
     self.assertEqual([], errors({"create_db_dbuser": "false"}))
-
-
-  def visibility(self, services):
-    configurations = {}
-    self.advisor.PolarisRecommender().recommendPolarisTlsConfigurations(configurations, services)
-    attrs = {}
-    for site in ("polaris-env", "polaris-application-properties", "ranger-polaris-policymgr-ssl"):
-      for name, values in configurations.get(site, {}).get("property_attributes", {}).items():
-        if "visible" in values:
-          attrs[name] = values["visible"]
-    return attrs
-
-  def test_tls_material_is_shown_and_required_only_where_tls_is_enabled(self):
-    # with Kerberos the advisor enables every TLS: all the material is shown (and required by the definitions)
-    shown = self.visibility(self.services("true", "internal"))
-    for name in ("polaris_ssl_keystore_password", "polaris_ssl_key_password", "polaris_ssl_truststore_password",
-                 "quarkus.http.ssl.certificate.key-store-file", "quarkus.http.ssl.certificate.trust-store-file",
-                 "polaris_mcp_tls_cert_file", "polaris_mcp_tls_key_file", "polaris_console_tls_cert_file",
-                 "polaris_console_tls_key_file"):
-      self.assertEqual("true", shown[name], name)
-    # without TLS nothing is shown, so nothing is required
-    hidden = self.visibility(self.services("false", "internal"))
-    self.assertEqual({"false"}, set(hidden.values()))
-    # the operator's switches decide when the advisor does not force them
-    mixed = self.visibility(self.services("false", "internal", {"polaris_ssl_enabled": "true", "polaris_mcp_tls_enabled": "false",
-                                                                "polaris_console_tls_enabled": "true"}))
-    self.assertEqual(("true", "false", "true"), (mixed["polaris_ssl_keystore_password"], mixed["polaris_mcp_tls_cert_file"],
-                                                 mixed["polaris_console_tls_cert_file"]))
-
-  def test_ranger_plugin_truststore_is_shown_with_an_https_ranger_admin(self):
-    def shown(url, plugin):
-      services = self.services("false", "internal")
-      services["configurations"]["admin-properties"] = {"properties": {"policymgr_external_url": url}}
-      services["configurations"]["ranger-polaris-plugin-properties"] = {"properties": {"ranger-polaris-plugin-enabled": plugin}}
-      return self.visibility(services)["xasecure.policymgr.clientssl.truststore"]
-    self.assertEqual("true", shown("https://ranger:6182", "Yes"))
-    self.assertEqual("false", shown("http://ranger:6080", "Yes"))
-    self.assertEqual("false", shown("https://ranger:6182", "No"))
 
 
 if __name__ == "__main__":

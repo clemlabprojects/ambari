@@ -179,10 +179,10 @@
   </property>
   <property>
     <name>http-server.ssl.keystore-path</name>
-    <value></value>
+    <value>/etc/security/serverKeys/keystore.jks</value>
     <description>Keystore of the dashboard and REST API TLS certificate; its key uses the keystore password. Required when TLS is enabled.</description>
     <value-attributes>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
@@ -198,7 +198,7 @@
     <description>Password of the dashboard keystore.</description>
     <value-attributes>
       <type>password</type>
-      <empty-value-valid>false</empty-value-valid>
+      <empty-value-valid>true</empty-value-valid>
     </value-attributes>
     <on-ambari-upgrade add="true"/>
   </property>
