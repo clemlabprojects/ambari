@@ -146,5 +146,16 @@ class TestPolarisTlsSecurity(unittest.TestCase):
     self.assertEqual([], self.ranger_ssl_errors({}, plugin="No"))
 
 
+  def test_database_setup_requires_the_administrator_password(self):
+    def errors(props):
+      services = self.services("false", "internal")
+      items = self.advisor.PolarisValidator().validatePolarisDbProperties(props, {}, services["configurations"], services,
+                                                                          {"items": [{"Hosts": {"host_name": "h1"}}]})
+      return [item["config-name"] for item in items if item["level"] == "ERROR"]
+    self.assertEqual(["db_root_password"], errors({"create_db_dbuser": "true", "db_root_user": "postgres"}))
+    self.assertEqual([], errors({"create_db_dbuser": "true", "db_root_user": "postgres", "db_root_password": "x"}))
+    self.assertEqual([], errors({"create_db_dbuser": "false"}))
+
+
 if __name__ == "__main__":
   unittest.main()

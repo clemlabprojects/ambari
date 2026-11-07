@@ -649,10 +649,12 @@ class PolarisValidator(service_advisor.ServiceAdvisor):
           "config-name": "db_root_user",
           "item": self.getWarnItem("db_root_user should be set when create_db_dbuser=true")
         })
+      # the start creates the database and its user with the administrator account: it fails without the password
       if not str(properties.get("db_root_password", "")).strip():
         validation_items.append({
           "config-name": "db_root_password",
-          "item": self.getWarnItem("db_root_password should be set when create_db_dbuser=true")
+          "item": self.getErrorItem("Setup Database and Database User is enabled: enter the password of the "
+                                    "database administrator, or disable it when the database and its user exist.")
         })
       if not str(properties.get("polaris_privelege_user_jdbc_url", "")).strip():
         validation_items.append({
