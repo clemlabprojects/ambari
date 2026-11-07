@@ -110,7 +110,9 @@ class TestSecretsStayOutOfTheTaskLog(unittest.TestCase):
 
     written, command, deleted = calls
     self.assertNotIn("root-s3cr3t", command[1])
-    self.assertIn("bootstrap -r POLARIS --credentials-file /var/run/polaris/bootstrap-credentials.json", command[1])
+    # the admin tool refuses -r with --credentials-file: the file names the realms
+    self.assertIn("bootstrap --credentials-file /var/run/polaris/bootstrap-credentials.json", command[1])
+    self.assertNotIn(" -r ", command[1])
     self.assertEqual("[PROTECTED]", repr(written[2]))
     self.assertEqual({"POLARIS": {"client-id": "root", "client-secret": "root-s3cr3t"}}, json.loads(str(written[2])))
     self.assertEqual(("File", "/var/run/polaris/bootstrap-credentials.json", None, "delete"), deleted)

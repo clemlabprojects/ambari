@@ -487,13 +487,11 @@ def run_admin_bootstrap():
     raise Fail("polaris_admin_username and polaris_admin_password must not contain commas for admin bootstrap.")
 
   # The root credentials go through a file readable by Polaris only, never on the command line, which the
-  # task log shows: {realm: {client-id, client-secret}} (YAML, of which JSON is a subset).
+  # task log shows: {realm: {client-id, client-secret}} (YAML, of which JSON is a subset). The file names the
+  # realms to bootstrap (the admin tool refuses -r with --credentials-file).
   credentials_file = os.path.join(params.polaris_pid_dir, "bootstrap-credentials.json")
   credentials = dict((realm, {"client-id": bootstrap_user, "client-secret": bootstrap_password}) for realm in realms)
-  bootstrap_cmd_parts = [format("{polaris_home}/bin/admin"), "bootstrap"]
-  for realm in realms:
-    bootstrap_cmd_parts.extend(["-r", realm])
-  bootstrap_cmd_parts.extend(["--credentials-file", credentials_file])
+  bootstrap_cmd_parts = [format("{polaris_home}/bin/admin"), "bootstrap", "--credentials-file", credentials_file]
   bootstrap_cmd = " ".join(shlex.quote(part) for part in bootstrap_cmd_parts)
 
   admin_cfg = "{0}/admin.properties".format(params.polaris_conf_dir)
