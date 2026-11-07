@@ -139,15 +139,15 @@ public class HostStackVersionResourceProviderTest {
     repositoryVersionDAOMock = createNiceMock(RepositoryVersionDAO.class);
     hostVersionDAOMock = createNiceMock(HostVersionDAO.class);
     configHelper = createNiceMock(ConfigHelper.class);
+    // the install command checks its hosts on the injected Clusters (AmbariActionExecutionHelper): the hosts are registered
+    clusters = createNiceMock(Clusters.class);
+    expect(clusters.hostExists(anyString())).andReturn(true).anyTimes();
     // Initialize injector
     InMemoryDefaultTestModule module = new InMemoryDefaultTestModule();
     injector = Guice.createInjector(Modules.override(module).with(new MockModule()));
     injector.getInstance(GuiceJpaInitializer.class);
     ambariMetaInfo = injector.getInstance(AmbariMetaInfo.class);
     managementController = createMock(AmbariManagementController.class);
-    clusters = createNiceMock(Clusters.class);
-    // the hosts of the install commands are registered
-    expect(clusters.hostExists(anyString())).andReturn(true).anyTimes();
     cluster = createNiceMock(Cluster.class);
     response = createNiceMock(RequestStatusResponse.class);
     resourceProviderFactory = createNiceMock(ResourceProviderFactory.class);
@@ -498,6 +498,7 @@ public class HostStackVersionResourceProviderTest {
       bind(RepositoryVersionDAO.class).toInstance(repositoryVersionDAOMock);
       bind(HostVersionDAO.class).toInstance(hostVersionDAOMock);
       bind(ConfigHelper.class).toInstance(configHelper);
+      bind(Clusters.class).toInstance(clusters);
     }
   }
 }
