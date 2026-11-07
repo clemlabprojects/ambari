@@ -368,10 +368,8 @@ public class CheckDescription {
       "Ozone does not support a rolling upgrade",
       new ImmutableMap.Builder<String, String>()
           .put(AbstractCheckDescriptor.DEFAULT,
-              "Apache Ozone only supports non-rolling upgrades: all Ozone components are stopped, the Ozone " +
-                  "Managers are restarted in upgrade mode, then the cluster is finalized. Its rolling upgrade " +
-                  "(Zero Downtime Upgrade) is not available for the Ozone version of this stack. Choose the " +
-                  "Express upgrade.").build());
+              "Apache Ozone does not support Rolling Upgrade mode. Use Express mode for upgrading a cluster " +
+                  "with Ozone.").build());
 
   public static CheckDescription JAVA_VERSION = new CheckDescription("JAVA_VERSION",
       PrereqCheckType.CLUSTER,
