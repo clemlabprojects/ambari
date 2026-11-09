@@ -28,10 +28,10 @@ import base64
 import os
 import pwd
 import grp
-import shutil
 import time
 
-from resource_management.core import shell
+# NiFi's files belong to the NiFi user: every file access goes through sudo (the agent may run as a non-root user)
+from resource_management.core import shell, sudo
 from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.utils import PasswordString
@@ -50,13 +50,20 @@ FAILURE_MARKER = 'Failed to process'
 def read_properties(path):
   """Parses a .properties file, splitting on the first '=' only (keys and protected values may contain '=')."""
   properties = {}
-  with open(path) as f:
-    for line in f:
-      line = line.rstrip('\n')
-      if line and not line.lstrip().startswith('#') and '=' in line:
-        name, value = line.split('=', 1)
-        properties[name.strip()] = value
+  for line in sudo.read_file(path).decode('utf-8').splitlines():
+    if line and not line.lstrip().startswith('#') and '=' in line:
+      name, value = line.split('=', 1)
+      properties[name.strip()] = value
   return properties
+
+
+def non_empty_file(path):
+  return sudo.path_isfile(path) and shell.call(('test', '-s', path), sudo=True, quiet=True)[0] == 0
+
+
+def remove_tree(path):
+  if sudo.path_lexists(path):
+    sudo.rmtree(path)
 
 
 def unprotect(value, scheme, master_key_hex):
@@ -76,15 +83,13 @@ def unprotect(value, scheme, master_key_hex):
 def write_properties_copy(source, target, replacements, drop):
   """Copies a .properties file, replacing the values of the given names and dropping others."""
   out = []
-  with open(source) as f:
-    for line in f:
-      name = line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else None
-      if name in drop:
-        continue
-      out.append('{0}={1}\n'.format(name, replacements[name]) if name in replacements else line)
-  with open(target, 'w') as f:
-    f.writelines(out)
-  os.chmod(target, 0o600)
+  for line in sudo.read_file(source).decode('utf-8').splitlines(True):
+    name = line.split('=', 1)[0].strip() if '=' in line and not line.lstrip().startswith('#') else None
+    if name in drop:
+      continue
+    out.append('{0}={1}\n'.format(name, replacements[name]) if name in replacements else line)
+  sudo.create_file(target, ''.join(out))
+  sudo.chmod(target, 0o600)
 
 
 class FlowSensitivePropertiesMigration(object):
@@ -94,17 +99,17 @@ class FlowSensitivePropertiesMigration(object):
     self.nifi_config_dir = nifi_config_dir
     self.java = os.path.join(java_home, 'bin', 'java')
     self.user = user
-    self.uid = pwd.getpwnam(user).pw_uid
-    self.gid = grp.getgrnam(group).gr_gid
+    self.owner = pwd.getpwnam(user)
+    self.group = grp.getgrnam(group)
 
   def current_values_if_changed(self, new_key, new_algorithm):
     """The on-disk key, protection and algorithm when they differ from the configured ones, else {}."""
     current_file = os.path.join(self.nifi_config_dir, 'nifi.properties')
-    if not os.path.isfile(current_file):
+    if not sudo.path_isfile(current_file):
       return {}
     current = read_properties(current_file)
     bootstrap_file = os.path.join(self.nifi_config_dir, 'bootstrap.conf')
-    master_key = read_properties(bootstrap_file).get(BOOTSTRAP_KEY) if os.path.isfile(bootstrap_file) else None
+    master_key = read_properties(bootstrap_file).get(BOOTSTRAP_KEY) if sudo.path_isfile(bootstrap_file) else None
     old_key = unprotect(current.get(KEY, ''), current.get(KEY_PROTECTED, ''), master_key)
     if old_key == new_key and (current.get(ALGORITHM) or DEFAULT_ALGORITHM) == (new_algorithm or DEFAULT_ALGORITHM):
       return {}
@@ -112,15 +117,14 @@ class FlowSensitivePropertiesMigration(object):
 
   def run(self, new_key, new_algorithm):
     current_file = os.path.join(self.nifi_config_dir, 'nifi.properties')
-    if not os.path.isfile(current_file):
+    if not sudo.path_isfile(current_file):
       return
     current = read_properties(current_file)
-    flows = [current[p] for p in FLOW_FILE_PROPERTIES
-             if current.get(p) and os.path.isfile(current[p]) and os.path.getsize(current[p]) > 0]
+    flows = [current[p] for p in FLOW_FILE_PROPERTIES if current.get(p) and non_empty_file(current[p])]
     old_algorithm = current.get(ALGORITHM) or DEFAULT_ALGORITHM
     new_algorithm = new_algorithm or DEFAULT_ALGORITHM
     bootstrap_file = os.path.join(self.nifi_config_dir, 'bootstrap.conf')
-    master_key = read_properties(bootstrap_file).get(BOOTSTRAP_KEY) if os.path.isfile(bootstrap_file) else None
+    master_key = read_properties(bootstrap_file).get(BOOTSTRAP_KEY) if sudo.path_isfile(bootstrap_file) else None
     old_key = unprotect(current.get(KEY, ''), current.get(KEY_PROTECTED, ''), master_key)
     if old_key == new_key and old_algorithm == new_algorithm:
       return
@@ -130,7 +134,7 @@ class FlowSensitivePropertiesMigration(object):
     Logger.info("The NiFi sensitive properties key or algorithm changed, re-encrypting the existing flow")
     # same filesystem as the flow, so the converted files replace the originals with an atomic rename
     work = os.path.join(os.path.dirname(flows[0]), '.sensitive-props-migration')
-    shutil.rmtree(work, ignore_errors=True)
+    remove_tree(work)
     try:
       staged = self._stage(work, 'stage', current_file, flows, {KEY: old_key, ALGORITHM: old_algorithm})
       if old_key != new_key:
@@ -142,23 +146,24 @@ class FlowSensitivePropertiesMigration(object):
       self._encryptor(work, 'verify', 'SetSensitivePropertiesKey', new_key)
       suffix = time.strftime('.before-sensitive-props-change-%Y%m%d%H%M%S')
       for original, converted in staged.items():
-        shutil.copy2(original, original + suffix)
-        os.chown(original + suffix, self.uid, self.gid)
-        os.rename(converted, original)
+        sudo.copy(original, original + suffix)
+        sudo.chown(original + suffix, self.owner, self.group)
+        sudo.chmod(converted, sudo.stat(original).st_mode & 0o777)
+        sudo.move(converted, original)
         Logger.info("Re-encrypted {0}, previous version kept as {1}".format(original, original + suffix))
     finally:
-      shutil.rmtree(work, ignore_errors=True)
+      remove_tree(work)
 
   def _stage(self, work, name, properties_file, flows, values):
     """Copies the flow files and a plain nifi.properties pointing at them into work/name; returns {source: copy}."""
     directory = os.path.join(work, name)
-    os.makedirs(directory, mode=0o700)
+    sudo.makedirs(directory, 0o700)
     copies = {}
     replacements = dict(values)
     current = read_properties(properties_file)
     for flow in flows:
       copy = os.path.join(directory, os.path.basename(flow))
-      shutil.copy2(flow, copy)
+      sudo.copy(flow, copy)
       copies[flow] = copy
     for prop in FLOW_FILE_PROPERTIES:
       if current.get(prop):
@@ -166,9 +171,9 @@ class FlowSensitivePropertiesMigration(object):
         original = next((f for f in copies if f == source or os.path.basename(f) == os.path.basename(source)), None)
         replacements[prop] = copies[original] if original else os.path.join(directory, 'absent-' + os.path.basename(source))
     write_properties_copy(properties_file, os.path.join(directory, 'nifi.properties'), replacements, drop=(KEY_PROTECTED,))
-    for root, dirs, files in os.walk(work):
-      for entry in [root] + [os.path.join(root, f) for f in files]:
-        os.chown(entry, self.uid, self.gid)
+    # chown_recursive leaves the top directory itself to the caller
+    sudo.chown(work, self.owner, self.group)
+    sudo.chown_recursive(work, self.owner, self.group)
     return copies
 
   def _encryptor(self, work, name, command, value):
