@@ -19,6 +19,7 @@ limitations under the License.
 """
 
 import os
+import ssl
 import urllib.request
 import http.client
 import nifi_toolkit_util_common
@@ -58,7 +59,9 @@ class NifiServiceCheck(Script):
   def check_nifi_portal_with_python(url):
     try:
       request = urllib.request.Request(url)
-      result = openurl(request, timeout=20)
+      # a liveness probe: NiFi's certificate is usually signed by the cluster CA, which the system does not trust
+      context = ssl._create_unverified_context() if url.startswith("https://") else None
+      result = openurl(request, timeout=20, context=context)
       response_code = result.getcode()
       if response_code == 200 or response_code == 401:
         Logger.info("Nifi portal {0} is up. Response code {1}".format(url, response_code))
@@ -85,7 +88,9 @@ class NifiServiceCheck(Script):
   def check_nifi_portal_with_toolkit(urls,jdk64_home,nifi_dir,nifi_bootstrap,toolkit_tmp_dir,stack_version_buildnum):
 
     node_manager_script = nifi_toolkit_util_common.get_toolkit_script('node-manager.sh', toolkit_tmp_dir, stack_version_buildnum)
-    File(node_manager_script, mode=0o755)
+    # File() created a missing script as an empty executable, which then "succeeded": such a leftover is missing too
+    if shell.call(('test', '-s', node_manager_script), sudo=True, quiet=True)[0] != 0:
+      raise Fail("The NiFi admin toolkit script {0} is missing".format(node_manager_script))
     command =  'ambari-sudo.sh JAVA_HOME='+jdk64_home+' '+ node_manager_script + ' -d ' + nifi_dir +' -b ' + nifi_bootstrap +' -o status -u "' + ','.join(urls) + '"'
     code, out = shell.call(command,quiet=True,logoutput=False)
 
