@@ -371,6 +371,13 @@ public class CheckDescription {
               "Apache Ozone does not support Rolling Upgrade mode. Use Express mode for upgrading a cluster " +
                   "with Ozone.").build());
 
+  public static CheckDescription NIFI_2_UPGRADE = new CheckDescription("NIFI_2_UPGRADE",
+      PrereqCheckType.SERVICE,
+      "NiFi is ready for NiFi 2",
+      new ImmutableMap.Builder<String, String>()
+          .put(AbstractCheckDescriptor.DEFAULT,
+              "ODP 1.3.2.0 upgrades NiFi to NiFi 2. Before upgrading: %s").build());
+
   public static CheckDescription JAVA_VERSION = new CheckDescription("JAVA_VERSION",
       PrereqCheckType.CLUSTER,
       "Verify Java version requirement",

@@ -250,5 +250,29 @@
       </component>
     </service>
 
+    <!-- NiFi 2 (ODP 1.3.2.0): the NiFi 1 defaults NiFi 2 refuses. Idempotent: no change when already converted. -->
+    <service name="NIFI">
+      <component name="NIFI_MASTER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_2_0_nifi_write_ahead_provenance" summary="NiFi 2 provenance repository">
+            <type>nifi-properties</type>
+            <!-- NiFi 2 removed the PersistentProvenanceRepository; the WriteAheadProvenanceRepository reads its events -->
+            <replace key="nifi.provenance.repository.implementation" find="org.apache.nifi.provenance.PersistentProvenanceRepository"
+                     replace-with="org.apache.nifi.provenance.WriteAheadProvenanceRepository"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
+    <service name="NIFI_REGISTRY">
+      <component name="NIFI_REGISTRY_MASTER">
+        <changes>
+          <definition xsi:type="configure" id="odp_1_3_2_0_nifi_registry_database_dir" summary="NiFi Registry database out of the install directory">
+            <type>nifi-registry-properties</type>
+            <!-- the database was copied there by scripts/nifi_registry_upgrade.py (Perform Backups) -->
+            <replace key="nifi.registry.db.url" find="jdbc:h2:./database/" replace-with="jdbc:h2:{{nifi_registry_database_dir}}/"/>
+          </definition>
+        </changes>
+      </component>
+    </service>
   </services>
 </upgrade-config-changes>

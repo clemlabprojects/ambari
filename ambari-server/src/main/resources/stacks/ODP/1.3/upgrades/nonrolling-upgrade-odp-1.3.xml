@@ -23,6 +23,8 @@
   <prerequisite-checks>
     <!-- ODP: the deprecated LIVY2_SERVER must be migrated (scripts/migrate_legacy_livy.py) before upgrading. -->
     <check>org.apache.ambari.server.checks.LegacyLivyCheck</check>
+    <!-- ODP: ODP 1.3.2.0 upgrades NiFi to NiFi 2: the NiFi 1 cluster must be prepared (key, algorithm, no CA). -->
+    <check>org.apache.ambari.server.checks.NifiTwoUpgradeCheck</check>
     <check>org.apache.ambari.server.checks.LZOCheck</check>
     <!-- ODP: Amoro optimizing must be paused (AMORO service action Pause Optimizing) before upgrading. -->
     <check>org.apache.ambari.server.checks.AmoroOptimizingPausedCheck</check>
@@ -193,9 +195,19 @@
         </task>
       </execute-stage>
 
-      <execute-stage service="NIFI" component="NIFI_MASTER" title="Pre Upgrade NiFi Backup">
-        <task xsi:type="manual">
-          <message>Before continuing, please backup the NiFi flow.xml.gz, flow.json.gz, the NiFi conf directory and the local state directory referenced by the NiFi Master service(s) located on the following host(s): {{hosts.all}}. NiFi 2 rewrites flow.json.gz on first start; rollback to NiFi 1 requires the pre-upgrade copy.</message>
+      <!-- NiFi 2 rewrites flow.json.gz on its first start: the NiFi 1 flows are kept for a downgrade (Restore Backups) -->
+      <execute-stage service="NIFI" component="NIFI_MASTER" title="Back up the NiFi flows">
+        <task xsi:type="execute" hosts="all">
+          <script>scripts/nifi_upgrade.py</script>
+          <function>backup_flow</function>
+        </task>
+      </execute-stage>
+
+      <!-- the NiFi Registry database moves out of the install directory (odp_1_3_2_0_nifi_registry_database_dir) -->
+      <execute-stage service="NIFI_REGISTRY" component="NIFI_REGISTRY_MASTER" title="Copy the NiFi Registry database">
+        <task xsi:type="execute" hosts="all">
+          <script>scripts/nifi_registry_upgrade.py</script>
+          <function>copy_database</function>
         </task>
       </execute-stage>
 
@@ -311,6 +323,13 @@
         </task>
       </execute-stage>
 
+      <execute-stage service="NIFI" component="NIFI_MASTER" title="Restore the NiFi flows">
+        <task xsi:type="execute" hosts="all">
+          <script>scripts/nifi_upgrade.py</script>
+          <function>restore_flow</function>
+        </task>
+      </execute-stage>
+
       <execute-stage service="RANGER" component="RANGER_ADMIN" title="Restore Ranger Database">
         <task xsi:type="manual">
           <message>Before continuing, please restore the Ranger Admin database and Ranger Audit database on the following host(s): {{hosts.all}}.</message>
@@ -349,6 +368,14 @@
       <!-- HDFS -->
       <execute-stage service="HDFS" component="NAMENODE" title="Apply Zookeeper Client changes for HDFS services">
         <task xsi:type="configure" id="odp_1_2_4_0_zookeeper_client_hdfs"/>
+      </execute-stage>
+
+      <!-- NIFI: NiFi 2 (ODP 1.3.2.0) -->
+      <execute-stage service="NIFI" component="NIFI_MASTER" title="Apply the NiFi 2 provenance repository">
+        <task xsi:type="configure" id="odp_1_3_2_0_nifi_write_ahead_provenance"/>
+      </execute-stage>
+      <execute-stage service="NIFI_REGISTRY" component="NIFI_REGISTRY_MASTER" title="Point NiFi Registry at its database directory">
+        <task xsi:type="configure" id="odp_1_3_2_0_nifi_registry_database_dir"/>
       </execute-stage>
 
       <!-- KAFKA: in a NON_ROLLING upgrade all brokers stop together, so the
