@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<!-- NiFi 2 removed the FileAuthorizer: without Ranger, the managed authorizer (NiFi 1.4 and later, so NiFi 1.28 of
+     ODP 1.3.1.0 too) with the file user group and access policy providers, which keep the FileAuthorizer files.
+     Existing clusters keep their configured template; the upgrade to ODP 1.3.2.0 converts it. -->
+<configuration supports_final="false">
+  <property>
+    <name>content</name>
+    <display-name>Template for authorizers.xml</display-name>
+    <description>This is the jinja template for authorizers.xml</description>
+    <value>
+&lt;!--
+Licensed to the Apache Software Foundation (ASF) under one or more
+contributor license agreements.  See the NOTICE file distributed with
+this work for additional information regarding copyright ownership.
+The ASF licenses this file to You under the Apache License, Version 2.0
+(the &quot;License&quot;); you may not use this file except in compliance with
+the License.  You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+--&gt;
+&lt;!--
+This file lists the authorizers to use when running securely. The identifier of the authorizer must be specified
+in the nifi.properties file (nifi.security.user.authorizer).
+Without Ranger, NiFi uses its managed authorizer (NiFi 1.4 and later, the only one of NiFi 2): the users file and the
+authorizations file keep the format of the former FileAuthorizer. The initial admin and the node identities entered in
+the NiFi SSL configuration (Node Identity N) are created as users, and granted their policies, on the first start.
+--&gt;
+&lt;authorizers&gt;
+{% if has_ranger_admin and enable_ranger_nifi %}
+&lt;authorizer&gt;
+&lt;identifier&gt;{{nifi_authorizer}}&lt;/identifier&gt;
+&lt;class&gt;org.apache.nifi.ranger.authorization.RangerNiFiAuthorizer&lt;/class&gt;
+&lt;property name=&quot;Ranger Audit Config Path&quot;&gt;{{nifi_config_dir}}/ranger-nifi-audit.xml&lt;/property&gt;
+&lt;property name=&quot;Ranger Security Config Path&quot;&gt;{{nifi_config_dir}}/ranger-nifi-security.xml&lt;/property&gt;
+&lt;property name=&quot;Ranger Service Type&quot;&gt;nifi&lt;/property&gt;
+&lt;property name=&quot;Ranger Application Id&quot;&gt;nifi&lt;/property&gt;
+&lt;property name=&quot;Ranger Admin Identity&quot;&gt;{{ranger_admin_identity}}&lt;/property&gt;
+{% if security_enabled %}
+&lt;property name=&quot;Ranger Kerberos Enabled&quot;&gt;true&lt;/property&gt;
+{% else %}
+&lt;property name=&quot;Ranger Kerberos Enabled&quot;&gt;false&lt;/property&gt;
+{% endif %}
+{{nifi_ssl_config_content}}
+&lt;/authorizer&gt;
+{% else %}
+&lt;userGroupProvider&gt;
+&lt;identifier&gt;file-user-group-provider&lt;/identifier&gt;
+&lt;class&gt;org.apache.nifi.authorization.FileUserGroupProvider&lt;/class&gt;
+&lt;property name=&quot;Users File&quot;&gt;{{nifi_flow_config_dir}}/users.xml&lt;/property&gt;
+&lt;property name=&quot;Initial User Identity admin&quot;&gt;{{nifi_initial_admin_id}}&lt;/property&gt;
+{{nifi_ssl_config_content | replace(&quot;Node&quot;,&quot;Initial User&quot;)}}
+&lt;/userGroupProvider&gt;
+&lt;accessPolicyProvider&gt;
+&lt;identifier&gt;file-access-policy-provider&lt;/identifier&gt;
+&lt;class&gt;org.apache.nifi.authorization.FileAccessPolicyProvider&lt;/class&gt;
+&lt;property name=&quot;User Group Provider&quot;&gt;file-user-group-provider&lt;/property&gt;
+&lt;property name=&quot;Authorizations File&quot;&gt;{{nifi_flow_config_dir}}/authorizations.xml&lt;/property&gt;
+&lt;property name=&quot;Initial Admin Identity&quot;&gt;{{nifi_initial_admin_id}}&lt;/property&gt;
+{{nifi_ssl_config_content}}
+&lt;/accessPolicyProvider&gt;
+&lt;authorizer&gt;
+&lt;identifier&gt;{{nifi_authorizer}}&lt;/identifier&gt;
+&lt;class&gt;org.apache.nifi.authorization.StandardManagedAuthorizer&lt;/class&gt;
+&lt;property name=&quot;Access Policy Provider&quot;&gt;file-access-policy-provider&lt;/property&gt;
+&lt;/authorizer&gt;
+{% endif %}
+&lt;/authorizers&gt;
+    </value>
+    <value-attributes>
+      <type>content</type>
+    </value-attributes>
+    <on-ambari-upgrade add="true"/>
+  </property>
+</configuration>

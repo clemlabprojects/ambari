@@ -1,0 +1,61 @@
+<!--
+Licensed to the Apache Software Foundation (ASF) under one or more
+contributor license agreements.  See the NOTICE file distributed with
+this work for additional information regarding copyright ownership.
+The ASF licenses this file to You under the Apache License, Version 2.0
+(the "License"); you may not use this file except in compliance with
+the License.  You may obtain a copy of the License at
+http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<!--
+This file lists the authorizers to use when running securely. The identifier of the authorizer must be specified
+in the nifi.properties file (nifi.security.user.authorizer).
+Without Ranger, NiFi uses its managed authorizer (NiFi 1.4 and later, the only one of NiFi 2): the users file and the
+authorizations file keep the format of the former FileAuthorizer. The initial admin and the node identities entered in
+the NiFi SSL configuration (Node Identity N) are created as users, and granted their policies, on the first start.
+-->
+<authorizers>
+{% if has_ranger_admin and enable_ranger_nifi %}
+<authorizer>
+<identifier>{{nifi_authorizer}}</identifier>
+<class>org.apache.nifi.ranger.authorization.RangerNiFiAuthorizer</class>
+<property name="Ranger Audit Config Path">{{nifi_config_dir}}/ranger-nifi-audit.xml</property>
+<property name="Ranger Security Config Path">{{nifi_config_dir}}/ranger-nifi-security.xml</property>
+<property name="Ranger Service Type">nifi</property>
+<property name="Ranger Application Id">nifi</property>
+<property name="Ranger Admin Identity">{{ranger_admin_identity}}</property>
+{% if security_enabled %}
+<property name="Ranger Kerberos Enabled">true</property>
+{% else %}
+<property name="Ranger Kerberos Enabled">false</property>
+{% endif %}
+{{nifi_ssl_config_content}}
+</authorizer>
+{% else %}
+<userGroupProvider>
+<identifier>file-user-group-provider</identifier>
+<class>org.apache.nifi.authorization.FileUserGroupProvider</class>
+<property name="Users File">{{nifi_flow_config_dir}}/users.xml</property>
+<property name="Initial User Identity admin">{{nifi_initial_admin_id}}</property>
+{{nifi_ssl_config_content | replace("Node","Initial User")}}
+</userGroupProvider>
+<accessPolicyProvider>
+<identifier>file-access-policy-provider</identifier>
+<class>org.apache.nifi.authorization.FileAccessPolicyProvider</class>
+<property name="User Group Provider">file-user-group-provider</property>
+<property name="Authorizations File">{{nifi_flow_config_dir}}/authorizations.xml</property>
+<property name="Initial Admin Identity">{{nifi_initial_admin_id}}</property>
+{{nifi_ssl_config_content}}
+</accessPolicyProvider>
+<authorizer>
+<identifier>{{nifi_authorizer}}</identifier>
+<class>org.apache.nifi.authorization.StandardManagedAuthorizer</class>
+<property name="Access Policy Provider">file-access-policy-provider</property>
+</authorizer>
+{% endif %}
+</authorizers>

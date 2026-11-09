@@ -29,6 +29,7 @@ from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.functions.version_select_util import *
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.stack_features import check_stack_feature
+from resource_management.core.logger import Logger
 from resource_management.libraries.functions.stack_features import get_stack_feature_version
 from resource_management.libraries.resources.hdfs_resource import HdfsResource
 from resource_management.libraries.functions import stack_select
@@ -298,6 +299,10 @@ if nifi_sensitive_props_key:
 # NiFi 2.x dropped nifi.flow.configuration.json.file and reads the JSON flow from nifi.flow.configuration.file
 if check_stack_feature('nifi_flow_json_only', version_for_stack_feature_checks) and 'nifi.flow.configuration.json.file' in nifi_properties:
   nifi_properties['nifi.flow.configuration.file'] = nifi_properties.pop('nifi.flow.configuration.json.file')
+# With TLS NiFi has no HTTP port: site-to-site and the cluster protocol must be secure too, or NiFi refuses to start
+# ("Remote input HTTP is enabled but nifi.web.http.port is not specified")
+nifi_properties['nifi.remote.input.secure'] = 'true' if nifi_ssl_enabled else 'false'
+nifi_properties['nifi.cluster.protocol.is.secure'] = 'true' if nifi_ssl_enabled else 'false'
 
 #kerberos params
 nifi_kerberos_authentication_expiration = config['configurations']['nifi-properties']['nifi.kerberos.spnego.authentication.expiration']
@@ -311,6 +316,15 @@ nifi_state_management_content = config['configurations']['nifi-state-management-
 
 # params from nifi-authorizers-env
 nifi_authorizers_content = config['configurations']['nifi-authorizers-env']['content']
+# NiFi 2 removed the FileAuthorizer: a cluster upgraded from NiFi 1 keeps its configured template, which NiFi 2 refuses
+# ("The specified authorizer class 'org.apache.nifi.authorization.FileAuthorizer' is not known"): use the managed
+# authorizer template (stack default of ODP 1.3 nifi-authorizers-env), which keeps the FileAuthorizer files
+if check_stack_feature('nifi_flow_json_only', version_for_stack_feature_checks) and \
+    'org.apache.nifi.authorization.FileAuthorizer' in nifi_authorizers_content:
+  Logger.warning("The NiFi authorizers template uses the FileAuthorizer, removed in NiFi 2: using the managed authorizer "
+                 "template. Update the template in the NiFi configuration (nifi-authorizers-env) to the stack default.")
+  with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'templates', 'nifi-authorizers-managed.xml.j2')) as f:
+    nifi_authorizers_content = f.read()
 nifi_authorizers_dict = config['configurations']['nifi-authorizers-env']
 # params from nifi-login-identity-providers-env
 nifi_login_identity_providers_content = config['configurations']['nifi-login-identity-providers-env']['content']
