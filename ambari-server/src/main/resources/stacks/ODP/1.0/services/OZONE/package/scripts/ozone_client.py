@@ -24,6 +24,7 @@ from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions.stack_features import check_stack_feature
 from ozone import ozone
+import upgrade
 from ambari_commons import OSCheck, OSConst
 from ambari_commons.os_family_impl import OsFamilyImpl
 from resource_management.core.exceptions import ClientComponentHasNoStatus
@@ -48,6 +49,8 @@ class OzoneClientDefault(OzoneClient):
   def pre_upgrade_restart(self, env, upgrade_type=None):
     import params
     env.set_params(params)
+    # switch the client to the new version (ozone-client), like the other Ozone components
+    upgrade.prestart(env)
 
 
 
