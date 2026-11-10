@@ -19,6 +19,7 @@ limitations under the License.
 Ambari Agent
 
 """
+import json
 import re
 
 import os
@@ -86,7 +87,8 @@ class RemovePreviousStacks(Script):
     # the version is in the rpm package names with underscores (hadoop_1_3_1_0_58), in the deb ones
     # with dashes (hadoop-1-3-1-0-58)
     formated_versions = [re.sub(r'[.-]', separator, version) for separator in ('_', '-')]
-    all_installed_packages = self.pkg_provider.all_installed_packages()
+    # [name, version, repository] of every installed package (yum, apt and zypper managers)
+    all_installed_packages = self.pkg_provider.installed_packages()
 
     all_installed_packages = [package[0] for package in all_installed_packages]
     for package in all_installed_packages:
@@ -96,9 +98,35 @@ class RemovePreviousStacks(Script):
         Logger.info("%s added to remove" % (package))
     return packages
 
+  def links_in_use(self):
+    """
+    The stack root current links of the components installed on this host (stack_packages), or None when unknown.
+    An upgrade only selects the components of each host: the links of the other components keep the previous version.
+    """
+    config = Script.get_config()
+    components = config.get('localComponents')
+    try:
+      packages = json.loads(config['configurations']['cluster-env']['stack_packages'])
+      stack = packages[config['clusterLevelParams']['stack_name']]['stack-select']
+    except (KeyError, TypeError, ValueError):
+      return None
+    if not components:
+      return None
+    links = set()
+    for service in stack.values():
+      for component, data in service.items():
+        if component in components:
+          links.add(data.get('STACK-SELECT-PACKAGE'))
+          for scope in ('INSTALL', 'STANDARD', 'PATCH'):
+            links.update(data.get(scope, []))
+    return links
+
   def check_no_symlink_to_version(self, structured_output, version):
+    links = self.links_in_use()
     files = os.listdir(stack_root_current)
     for file in files:
+      if links is not None and file not in links:
+        continue
       if version in os.path.realpath(stack_root_current + file):
         structured_output["remove_previous_stacks"] = {"exit_code": -1,
                                            "message": "{0} contains symlink to version for remove! {1}".format(

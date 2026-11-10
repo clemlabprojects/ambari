@@ -19,6 +19,9 @@ limitations under the License.
 '''
 
 
+import json
+import os
+
 from mock.mock import patch
 from mock.mock import MagicMock
 from resource_management.core.logger import Logger
@@ -57,7 +60,7 @@ class TestRemoveStackVersion(RMFTestCase):
                        stack_versions_mock,
                        put_structured_out_mock, get_provider_mock, list_ambari_managed_repos_mock):
     m = MagicMock()
-    m.all_installed_packages.side_effect = TestRemoveStackVersion._add_packages
+    m.installed_packages.side_effect = TestRemoveStackVersion._add_packages
     get_provider_mock.return_value = m
     stack_versions_mock.return_value = [VERSION_STUB, OLD_VERSION_STUB]
     list_ambari_managed_repos_mock.return_value = []
@@ -105,7 +108,7 @@ class TestRemoveStackVersion(RMFTestCase):
     stack_versions_mock.return_value = [VERSION_STUB]
 
     m = MagicMock()
-    m.all_installed_packages.side_effect = TestRemoveStackVersion._add_packages
+    m.installed_packages.side_effect = TestRemoveStackVersion._add_packages
     get_provider_mock.return_value = m
 
     list_ambari_managed_repos_mock.return_value = []
@@ -138,7 +141,7 @@ class TestRemoveStackVersion(RMFTestCase):
     stack_versions_mock.return_value = [VERSION_STUB, OLD_VERSION_STUB]
 
     m = MagicMock()
-    m.all_installed_packages.side_effect = TestRemoveStackVersion._add_packages
+    m.installed_packages.side_effect = TestRemoveStackVersion._add_packages
     get_provider_mock.return_value = m
 
     list_ambari_managed_repos_mock.return_value = []
@@ -159,3 +162,48 @@ class TestRemoveStackVersion(RMFTestCase):
     self.assertTrue(stack_versions_mock.called)
     self.assertEqual(stack_versions_mock.call_args[0][0], '/usr/odp')
     self.assertNoMoreResources()
+
+  @patch("resource_management.libraries.functions.list_ambari_managed_repos.list_ambari_managed_repos")
+  @patch("ambari_commons.repo_manager.ManagerFactory.get")
+  @patch("resource_management.libraries.script.Script.put_structured_out")
+  @patch("resource_management.libraries.functions.stack_select.get_stack_versions")
+  @patch("resource_management.libraries.functions.repo_version_history.read_actual_version_from_history_file")
+  @patch("resource_management.libraries.functions.repo_version_history.write_actual_version_to_history_file")
+  @patch("resource_management.libraries.functions.stack_tools.get_stack_tool_package", new = MagicMock(return_value="hdp-select"))
+  @patch("resource_management.libraries.functions.stack_tools.get_stack_tool_path", new = MagicMock(return_value="/usr/bin/odp-select"))
+  @patch("os.listdir", new = MagicMock(return_value=["hadoop-hdfs-namenode", "hive-server2"]))
+  @patch("os.path.realpath", new = MagicMock(side_effect=lambda path: {
+    "/usr/odp/current/hadoop-hdfs-namenode": "/usr/odp/" + OLD_VERSION_STUB + "/hadoop-hdfs",
+    "/usr/odp/current/hive-server2": "/usr/odp/" + VERSION_STUB + "/hive"}.get(path, path)))
+  def test_links_of_components_not_on_the_host_keep_the_old_version(self,
+                       write_actual_version_to_history_file_mock,
+                       read_actual_version_from_history_file_mock,
+                       stack_versions_mock,
+                       put_structured_out_mock, get_provider_mock, list_ambari_managed_repos_mock):
+    # an upgrade only selects the components of the host: the NameNode link of a host without NameNode keeps the
+    # previous version, which must not block its removal
+    m = MagicMock()
+    m.installed_packages.side_effect = TestRemoveStackVersion._add_packages
+    get_provider_mock.return_value = m
+    stack_versions_mock.return_value = [VERSION_STUB, OLD_VERSION_STUB]
+    list_ambari_managed_repos_mock.return_value = []
+    stack_packages = {"HDP": {"stack-select": {
+      "HDFS": {"NAMENODE": {"STACK-SELECT-PACKAGE": "hadoop-hdfs-namenode", "INSTALL": ["hadoop-hdfs-namenode"],
+                            "PATCH": ["hadoop-hdfs-namenode"], "STANDARD": ["hadoop-hdfs-namenode"]}},
+      "HIVE": {"HIVE_SERVER": {"STACK-SELECT-PACKAGE": "hive-server2", "INSTALL": ["hive-server2"],
+                               "PATCH": ["hive-server2"], "STANDARD": ["hive-server2"]}}}}}
+
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "remove_previous_stacks.json")) as f:
+      config = json.load(f)
+    config["configurations"]["cluster-env"]["stack_packages"] = json.dumps(stack_packages)
+    config["localComponents"] = ["HIVE_SERVER"]
+    config["clusterLevelParams"] = {"stack_name": "HDP"}
+    self.executeScript("scripts/remove_previous_stacks.py",
+                       classname="RemovePreviousStacks",
+                       command="actionexecute",
+                       config_dict=config,
+                       target=RMFTestCase.TARGET_CUSTOM_ACTIONS,
+                       os_type=('Redhat', '6.4', 'Final')
+                       )
+    self.assertResourceCalled('Package', "pkg12_1_0_0_400", action=["remove"])
+    self.assertResourceCalled('Package', "hadoop-2-1-0-0-400", action=["remove"])
