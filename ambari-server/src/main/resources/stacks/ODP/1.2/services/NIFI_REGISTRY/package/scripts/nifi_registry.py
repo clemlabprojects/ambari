@@ -46,7 +46,8 @@ class Master(Script):
         env.set_params(params)
 
         if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, format_stack_version(params.version)):
-            stack_select.select("nifi-registry", params.version)
+            # every package of the component (nifi-registry and nifi-toolkit)
+            stack_select.select_packages(params.version)
         if params.version and check_stack_feature(StackFeature.CONFIG_VERSIONING, params.version):
             conf_select.select(params.stack_name, "nifi-registry", params.version)
 

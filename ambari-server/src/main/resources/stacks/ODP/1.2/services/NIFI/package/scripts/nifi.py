@@ -51,9 +51,14 @@ class Master(Script):
     env.set_params(params)
 
     if params.version and check_stack_feature(StackFeature.ROLLING_UPGRADE, format_stack_version(params.version)):
-      stack_select.select("nifi", params.version)
+      # every package of the component (nifi and nifi-toolkit), or the old version keeps nifi-toolkit
+      stack_select.select_packages(params.version)
     if params.version and check_stack_feature(StackFeature.CONFIG_VERSIONING, params.version):
       conf_select.select(params.stack_name, "nifi", params.version)
+    # NiFi writes in its install directory (docs, work, extensions...): the new version's directory, installed by the
+    # stack upgrade and not by install(), must belong to the NiFi user too ("Failed to create 'docs' directory!")
+    Directory(params.nifi_node_dir, owner=params.nifi_user, group=params.nifi_group, create_parents=True,
+              recursive_ownership=True, cd_access='a')
 
   def post_upgrade_restart(self, env, upgrade_type=None):
     pass
