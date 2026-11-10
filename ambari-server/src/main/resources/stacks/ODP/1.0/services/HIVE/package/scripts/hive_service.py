@@ -195,9 +195,13 @@ def hiveserver2_stop_timeout():
   timeout = max(30, int(math.ceil(int(match.group(1)) * units[match.group(2)]))) + 5
   command_timeout = int(params.config.get("commandParams", {}).get("command_timeout", 3600))
   if timeout + 120 > command_timeout:
-    raise Fail("HiveServer2 graceful shutdown needs {0}s plus command overhead, but Ambari's "
-               "command timeout is {1}s. Increase the command timeout or reduce {2}.".format(
-                 timeout, command_timeout, key))
+    # Upgrade tasks run with agent.task.timeout (900s by default), not the HIVE_SERVER command timeout: drain for what
+    # the command allows, then stop HiveServer2 as before (a stop that fails blocks the whole upgrade)
+    capped = max(30, command_timeout - 120)
+    Logger.warning("HiveServer2 graceful shutdown needs {0}s ({1}) plus command overhead, but this command's timeout is "
+                   "{2}s: waiting {3}s for running operations, then stopping HiveServer2.".format(
+                     timeout, key, command_timeout, capped))
+    return capped
   return timeout
 
 

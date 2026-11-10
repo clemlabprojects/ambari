@@ -93,11 +93,13 @@ class TestGracefulShutdown(unittest.TestCase):
         with self.assertRaisesRegex(Fail, "Invalid hive.server2.graceful.stop.timeout"):
           self.timeout(config=config)
 
-  def test_agent_timeout_must_allow_drain(self):
+  def test_short_command_timeout_limits_the_drain(self):
+    # upgrade stop tasks run with agent.task.timeout (900s by default): drain for what the command allows
     config = self.config()
-    config["commandParams"]["command_timeout"] = 1500
-    with self.assertRaisesRegex(Fail, "Increase the command timeout"):
-      self.timeout(config=config)
+    config["commandParams"]["command_timeout"] = 900
+    self.assertEqual(780, self.timeout(config=config))
+    config["commandParams"]["command_timeout"] = 100
+    self.assertEqual(30, self.timeout(config=config))
 
   def test_metainfo_allows_default_drain_and_restart(self):
     root = ElementTree.parse(STACKS / "1.3/services/HIVE/metainfo.xml")
