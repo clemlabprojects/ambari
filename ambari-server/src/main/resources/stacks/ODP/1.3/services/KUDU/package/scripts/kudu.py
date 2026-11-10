@@ -29,6 +29,9 @@ from resource_management.core.logger import Logger
 from resource_management.core import shell as ambari_shell
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.format import format
+from resource_management.libraries.functions import stack_select
+from resource_management.libraries.functions.constants import StackFeature
+from resource_management.libraries.functions.stack_features import check_stack_feature
 
 
 # Kudu's sys-catalog tablet has a fixed, hard-coded all-zeros id; the presence of
@@ -38,6 +41,14 @@ SYS_CATALOG_TABLET_ID = '0' * 32
 
 
 class Kudu(Script):
+    def pre_upgrade_restart(self, env, upgrade_type=None):
+        import params
+        env.set_params(params)
+        # switch the component's links to the upgrade target (stack_packages.json KUDU/<component>)
+        if params.version_for_stack_feature_checks and \
+                check_stack_feature(StackFeature.ROLLING_UPGRADE, params.version_for_stack_feature_checks):
+            stack_select.select_packages(params.version_for_stack_feature_checks)
+
     def installKudu(self, env):
         self.install_packages(env)
         self.configure(env)

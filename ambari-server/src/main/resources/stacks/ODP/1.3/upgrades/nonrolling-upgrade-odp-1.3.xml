@@ -94,6 +94,24 @@
         <component>KNOX_GATEWAY</component>
       </service>
 
+      <service name="POLARIS">
+        <component>POLARIS_MCP_SERVER</component>
+        <component>POLARIS_CONSOLE</component>
+        <component>POLARIS_SERVER</component>
+      </service>
+
+      <service name="IMPALA">
+        <component>IMPALA_ATLAS_EXTRACTOR</component>
+        <component>IMPALA_DAEMON</component>
+        <component>IMPALA_CATALOG_SERVICE</component>
+        <component>IMPALA_STATE_STORE</component>
+      </service>
+
+      <service name="KUDU">
+        <component>KUDU_TSERVER</component>
+        <component>KUDU_MASTER</component>
+      </service>
+
       <service name="AMORO">
         <component>AMORO_SERVER</component>
       </service>
@@ -852,6 +870,53 @@
       </service>
     </group>
 
+    <!-- Polaris after Ozone and Ranger; Impala after the Hive metastore and Kudu -->
+    <group xsi:type="restart" name="POLARIS" title="Polaris">
+      <service-check>false</service-check>
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service name="POLARIS">
+        <component>POLARIS_SERVER</component>
+        <component>POLARIS_MCP_SERVER</component>
+        <component>POLARIS_CONSOLE</component>
+        <component>POLARIS_CLIENT</component>
+      </service>
+    </group>
+
+    <group xsi:type="restart" name="KUDU" title="Kudu">
+      <service-check>false</service-check>
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service name="KUDU">
+        <component>KUDU_MASTER</component>
+        <component>KUDU_TSERVER</component>
+        <component>KUDU_CLIENT</component>
+      </service>
+    </group>
+
+    <group xsi:type="restart" name="IMPALA" title="Impala">
+      <service-check>false</service-check>
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service name="IMPALA">
+        <component>IMPALA_STATE_STORE</component>
+        <component>IMPALA_CATALOG_SERVICE</component>
+        <component>IMPALA_DAEMON</component>
+        <component>IMPALA_ATLAS_EXTRACTOR</component>
+        <component>IMPALA_CLIENT</component>
+      </service>
+    </group>
+
+    <group xsi:type="restart" name="DBT_CLIENTS" title="dbt Clients">
+      <service-check>false</service-check>
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <parallel-scheduler/>
+      <service name="DBT">
+        <component>DBT_CLIENT</component>
+      </service>
+    </group>
+
     <group xsi:type="restart" name="AMORO" title="Amoro">
       <service-check>false</service-check>
       <skippable>true</skippable>
@@ -875,6 +940,10 @@
         <service>ZEPPELIN</service>
         <service>OOZIE</service>
         <service>HUE</service>
+        <service>POLARIS</service>
+        <service>KUDU</service>
+        <service>IMPALA</service>
+        <service>DBT</service>
         <service>AMORO</service>
       </priority>
     </group>
@@ -1355,6 +1424,83 @@
 
     <service name="HUE">
       <component name="HUE_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="POLARIS">
+      <component name="POLARIS_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="POLARIS_MCP_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="POLARIS_CONSOLE">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="POLARIS_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="KUDU">
+      <component name="KUDU_MASTER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="KUDU_TSERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="KUDU_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="IMPALA">
+      <component name="IMPALA_STATE_STORE">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_CATALOG_SERVICE">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_DAEMON">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_ATLAS_EXTRACTOR">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="DBT">
+      <component name="DBT_CLIENT">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>

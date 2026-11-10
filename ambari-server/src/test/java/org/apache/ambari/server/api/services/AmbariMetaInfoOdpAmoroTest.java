@@ -27,9 +27,12 @@ import static org.junit.Assert.fail;
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 
 import javax.persistence.EntityManager;
 
@@ -51,6 +54,8 @@ import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptorFactory;
 import org.apache.ambari.server.state.oidc.OidcDescriptorFactory;
 import org.apache.ambari.server.state.stack.OsFamily;
 import org.apache.ambari.server.state.stack.UpgradePack;
+import org.apache.ambari.server.state.stack.upgrade.Direction;
+import org.apache.ambari.server.state.stack.upgrade.Grouping;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -134,6 +139,49 @@ public class AmbariMetaInfoOdpAmoroTest {
     String check = "org.apache.ambari.server.checks.OzoneRollingUpgradeCheck";
     assertTrue(packs.get("upgrade-odp-1.3").getPrerequisiteChecks().contains(check));
     assertTrue(!packs.get("nonrolling-upgrade-odp-1.3").getPrerequisiteChecks().contains(check));
+  }
+
+  /**
+   * Services added in ODP 1.3.2.0 must be upgraded between two ODP 1.3 builds: every component is restarted (and
+   * switched to the target version) by both packs, and the servers report their version.
+   */
+  @Test
+  public void testOdp1320ServicesAreUpgradedByTheOdp13Packs() throws Exception {
+    Map<String, String[]> services = new LinkedHashMap<>();
+    services.put("POLARIS", new String[]{"POLARIS_SERVER", "POLARIS_MCP_SERVER", "POLARIS_CONSOLE", "POLARIS_CLIENT"});
+    services.put("KUDU", new String[]{"KUDU_MASTER", "KUDU_TSERVER", "KUDU_CLIENT"});
+    services.put("IMPALA", new String[]{"IMPALA_STATE_STORE", "IMPALA_CATALOG_SERVICE", "IMPALA_DAEMON",
+        "IMPALA_ATLAS_EXTRACTOR", "IMPALA_CLIENT"});
+    services.put("DBT", new String[]{"DBT_CLIENT"});
+
+    Map<String, UpgradePack> packs = metaInfo.getUpgradePacks("ODP", "1.3");
+    for (String name : new String[]{"upgrade-odp-1.3", "nonrolling-upgrade-odp-1.3"}) {
+      UpgradePack pack = packs.get(name);
+      Set<String> restarted = new HashSet<>();
+      for (Grouping group :
+          pack.getGroups(Direction.UPGRADE)) {
+        for (UpgradePack.OrderService service : group.services) {
+          for (String component : service.components) {
+            restarted.add(service.serviceName + "/" + component);
+          }
+        }
+      }
+      for (Map.Entry<String, String[]> service : services.entrySet()) {
+        for (String component : service.getValue()) {
+          String key = name + " " + service.getKey() + "/" + component;
+          assertNotNull(key, pack.getTasks().get(service.getKey()));
+          assertNotNull(key, pack.getTasks().get(service.getKey()).get(component));
+          assertTrue(key, restarted.contains(service.getKey() + "/" + component));
+        }
+      }
+    }
+
+    for (Map.Entry<String, String[]> service : services.entrySet()) {
+      ServiceInfo serviceInfo = metaInfo.getService("ODP", "1.3", service.getKey());
+      for (String component : service.getValue()) {
+        assertTrue(component, findComponent(serviceInfo.getComponents(), component).isVersionAdvertised());
+      }
+    }
   }
 
   private static ComponentInfo findComponent(List<ComponentInfo> components, String name) {

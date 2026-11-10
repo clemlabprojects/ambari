@@ -30,6 +30,7 @@ limitations under the License.
           <displayName>Kudu Master</displayName>
           <category>MASTER</category>
           <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
           <commandScript>
             <script>scripts/kudu-master.py</script>
             <scriptType>PYTHON</scriptType>
@@ -51,6 +52,7 @@ limitations under the License.
           <displayName>Kudu Tablet Server</displayName>
           <category>SLAVE</category>
           <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
           <commandScript>
             <script>scripts/kudu-tserver.py</script>
             <scriptType>PYTHON</scriptType>
@@ -62,6 +64,7 @@ limitations under the License.
           <displayName>Kudu Client</displayName>
           <category>CLIENT</category>
           <cardinality>1+</cardinality>
+          <versionAdvertised>true</versionAdvertised>
           <commandScript>
             <script>scripts/kudu-client.py</script>
             <scriptType>PYTHON</scriptType>

@@ -483,6 +483,51 @@
       </service>
     </group>
 
+    <group name="POLARIS" title="Polaris">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="POLARIS">
+        <component>POLARIS_SERVER</component>
+        <component>POLARIS_MCP_SERVER</component>
+        <component>POLARIS_CONSOLE</component>
+        <component>POLARIS_CLIENT</component>
+      </service>
+    </group>
+
+    <group name="KUDU" title="Kudu">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="KUDU">
+        <component>KUDU_MASTER</component>
+        <component>KUDU_TSERVER</component>
+        <component>KUDU_CLIENT</component>
+      </service>
+    </group>
+
+    <group name="IMPALA" title="Impala">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="IMPALA">
+        <component>IMPALA_STATE_STORE</component>
+        <component>IMPALA_CATALOG_SERVICE</component>
+        <component>IMPALA_DAEMON</component>
+        <component>IMPALA_ATLAS_EXTRACTOR</component>
+        <component>IMPALA_CLIENT</component>
+      </service>
+    </group>
+
+    <group name="DBT_CLIENTS" title="dbt Clients">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="DBT">
+        <component>DBT_CLIENT</component>
+      </service>
+    </group>
+
     <group name="AMORO" title="Amoro">
       <skippable>true</skippable>
       <supports-auto-skip-failure>false</supports-auto-skip-failure>
@@ -1057,6 +1102,83 @@
           <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_section"/>
         </pre-upgrade>
         <pre-downgrade/>
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="POLARIS">
+      <component name="POLARIS_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="POLARIS_MCP_SERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="POLARIS_CONSOLE">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="POLARIS_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="KUDU">
+      <component name="KUDU_MASTER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="KUDU_TSERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="KUDU_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="IMPALA">
+      <component name="IMPALA_STATE_STORE">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_CATALOG_SERVICE">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_DAEMON">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_ATLAS_EXTRACTOR">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="IMPALA_CLIENT">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="DBT">
+      <component name="DBT_CLIENT">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>
