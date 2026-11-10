@@ -18,9 +18,10 @@ limitations under the License.
 
 """
 
-import sys, nifi_toolkit_util_common, os, pwd, grp, signal, time, glob, socket
+import sys, nifi_toolkit_util_common, os, pwd, grp, re, signal, time, glob, socket
 from resource_management import *
-from resource_management.core import sudo
+from resource_management.core import shell, sudo
+from resource_management.core.exceptions import ComponentIsNotRunning
 from resource_management.libraries.functions import conf_select
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions.default import default
@@ -149,8 +150,8 @@ class Master(Script):
     setup_ranger_nifi(upgrade_type=None)
 
     Execute ('export JAVA_HOME='+params.jdk64_home+';'+params.bin_dir+'/nifi.sh start >> ' + params.nifi_node_log_file, user=params.nifi_user)
-    #If nifi pid file not created yet, wait a bit
-    if not os.path.isfile(status_params.nifi_pid_dir+'/nifi.pid'):
+    #If nifi pid file not created yet, wait a bit (NiFi 1: NiFi 2 writes no pid file)
+    if not status_params.nifi_bootstrap_reports_status and not os.path.isfile(status_params.nifi_pid_dir+'/nifi.pid'):
       Execute ('sleep 5')
 
     if params.nifi_registry_url and params.stack_support_nifi_auto_client_registration and not params.force_skip_registry_registration:
@@ -162,7 +163,16 @@ class Master(Script):
 
   def status(self, env):
     import status_params
-    check_process_status(status_params.nifi_node_pid_file)
+    if not status_params.nifi_bootstrap_reports_status:
+      check_process_status(status_params.nifi_node_pid_file)
+      return
+    # NiFi 2: ask the bootstrap, as the NiFi user that owns its configuration and the process. Its status is 0 when
+    # the application runs, 3 when it is stopped, 4 when the process is alive but does not answer yet (starting).
+    code, out = shell.call(format("{status_params.nifi_bin_dir}/nifi.sh status"), user=status_params.nifi_user,
+                           quiet=True, timeout=60)
+    # upstream nifi.sh exits 0 whatever the bootstrap reports (it drops EXIT_STATUS): read the bootstrap report too
+    if code not in (0, 4) or re.search(r'Application Process (STOPPED|not found|not running)', out or ''):
+      raise ComponentIsNotRunning()
 
   def setup_tls_toolkit_upgrade(self,env):
     import params
