@@ -70,6 +70,13 @@ class OzoneStorageContainerDefault(OzoneStorageContainer):
     env.set_params(params)
     self.finalize_ozone_storage_container_upgrade()
 
+  def wait_ozone_scm_safemode(self, env):
+    """Upgrade pack task (Wait to leave Safemode): an execute task calls a command of this script, not the
+    module-level function of the same name."""
+    import params
+    env.set_params(params)
+    wait_ozone_scm_safemode(params.ozone_cmd, execute_kinit=True)
+
   def finalize_ozone_storage_container_upgrade(self):
     import params
     """
