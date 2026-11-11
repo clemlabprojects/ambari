@@ -25,6 +25,7 @@ with the previous key recovered from its protected value, and the converted flow
 NiFi has decrypted it again with the new key and algorithm.
 """
 import base64
+import gzip
 import os
 import pwd
 import grp
@@ -45,6 +46,7 @@ FLOW_FILE_PROPERTIES = ('nifi.flow.configuration.file', 'nifi.flow.configuration
 BOOTSTRAP_KEY = 'nifi.bootstrap.sensitive.key'
 COMMAND_PACKAGE = 'org.apache.nifi.flow.encryptor.command.'
 FAILURE_MARKER = 'Failed to process'
+ENCRYPTED_MARKER = b'enc{'
 
 
 def read_properties(path):
@@ -59,6 +61,14 @@ def read_properties(path):
 
 def non_empty_file(path):
   return sudo.path_isfile(path) and shell.call(('test', '-s', path), sudo=True, quiet=True)[0] == 0
+
+
+def has_encrypted_values(flow):
+  """True when the flow holds a value encrypted with the sensitive properties key (NiFi writes them as enc{...})."""
+  content = sudo.read_file(flow)
+  if flow.endswith('.gz'):
+    content = gzip.decompress(content)
+  return ENCRYPTED_MARKER in content
 
 
 def remove_tree(path):
@@ -113,14 +123,20 @@ class FlowSensitivePropertiesMigration(object):
     old_key = unprotect(current.get(KEY, ''), current.get(KEY_PROTECTED, ''), master_key)
     if old_key == new_key and (current.get(ALGORITHM) or DEFAULT_ALGORITHM) == (new_algorithm or DEFAULT_ALGORITHM):
       return {}
+    # without encrypted values there is nothing to re-encrypt at the next start: the new values apply now
+    if not any(has_encrypted_values(flow) for flow in self._flows(current)):
+      return {}
     return {name: current[name] for name in (KEY, KEY_PROTECTED, ALGORITHM) if name in current}
+
+  def _flows(self, current):
+    return [current[p] for p in FLOW_FILE_PROPERTIES if current.get(p) and non_empty_file(current[p])]
 
   def run(self, new_key, new_algorithm):
     current_file = os.path.join(self.nifi_config_dir, 'nifi.properties')
     if not sudo.path_isfile(current_file):
       return
     current = read_properties(current_file)
-    flows = [current[p] for p in FLOW_FILE_PROPERTIES if current.get(p) and non_empty_file(current[p])]
+    flows = self._flows(current)
     old_algorithm = current.get(ALGORITHM) or DEFAULT_ALGORITHM
     new_algorithm = new_algorithm or DEFAULT_ALGORITHM
     bootstrap_file = os.path.join(self.nifi_config_dir, 'bootstrap.conf')
@@ -130,6 +146,11 @@ class FlowSensitivePropertiesMigration(object):
       return
     if not flows:
       Logger.info("The NiFi sensitive properties key or algorithm changed, there is no flow to re-encrypt")
+      return
+    # the conversion needs the previous key, which NiFi may refuse (a key shorter than 12 characters never let
+    # NiFi 2 start): when the flow holds no encrypted value, there is nothing to convert and the new key just applies
+    if not any(has_encrypted_values(flow) for flow in flows):
+      Logger.info("The NiFi sensitive properties key or algorithm changed, the flow holds no encrypted value to re-encrypt")
       return
     Logger.info("The NiFi sensitive properties key or algorithm changed, re-encrypting the existing flow")
     # same filesystem as the flow, so the converted files replace the originals with an atomic rename

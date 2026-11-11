@@ -178,7 +178,7 @@
     <display-name>Sensitive property values encryption password</display-name>
     <description>
       This is the password used to encrypt any sensitive property values that are configured in processors.
-      It can be a string of any length, although the recommended minimum length is 10 characters.
+      Use at least 12 characters: NiFi 2.x (ODP 1.3.2.0 and later) refuses a shorter key and does not start.
       Be aware that once this password is set and one or more sensitive processor properties have been configured, this password should not be changed.
     </description>
     <value-attributes>
