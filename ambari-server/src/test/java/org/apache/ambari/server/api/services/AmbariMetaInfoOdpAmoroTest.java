@@ -27,6 +27,7 @@ import static org.junit.Assert.fail;
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,6 +48,7 @@ import org.apache.ambari.server.orm.dao.MetainfoDAO;
 import org.apache.ambari.server.stack.StackManager;
 import org.apache.ambari.server.stack.StackManagerFactory;
 import org.apache.ambari.server.state.ComponentInfo;
+import org.apache.ambari.server.state.PropertyInfo;
 import org.apache.ambari.server.state.ServiceInfo;
 import org.apache.ambari.server.state.alert.AlertDefinitionFactory;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
@@ -181,6 +183,20 @@ public class AmbariMetaInfoOdpAmoroTest {
       for (String component : service.getValue()) {
         assertTrue(component, findComponent(serviceInfo.getComponents(), component).isVersionAdvertised());
       }
+    }
+  }
+
+  @Test
+  public void testNifiShowsTheSensitivePropsKeyOnlyOnce() throws Exception {
+    // the scripts write nifi-ambari-config's key into nifi.properties: a nifi-properties copy would be ignored
+    for (String version : new String[]{"1.2", "1.3"}) {
+      Set<String> files = new HashSet<>();
+      for (PropertyInfo property : metaInfo.getService("ODP", version, "NIFI").getProperties()) {
+        if ("nifi.sensitive.props.key".equals(property.getName())) {
+          files.add(property.getFilename());
+        }
+      }
+      assertEquals(version, Collections.singleton("nifi-ambari-config.xml"), files);
     }
   }
 

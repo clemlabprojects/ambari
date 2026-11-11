@@ -549,16 +549,12 @@ If archiving is enabled (see nifi.content.repository.archive.enabled below), the
 
 
   <!--# security properties #-->
+  <!-- the key NiFi uses is nifi-ambari-config/nifi.sensitive.props.key, written into nifi.properties by params.py -->
   <property>
     <name>nifi.sensitive.props.key</name>
     <value></value>
-    <property-type>PASSWORD</property-type>
-    <value-attributes>
-      <empty-value-valid>false</empty-value-valid>
-      <type>password</type>
-    </value-attributes>
-    <on-ambari-upgrade add="true"/>
-    <description>This is the password used to encrypt any sensitive property values that are configured in processors. By default, it is blank, but the system administrator should provide a value for it. It can be a string of any length, although the recommended minimum length is 20 characters or NiFi will not accept it. Be aware that once this password is set and one or more sensitive processor properties have been configured, this password should not be changed.</description>
+    <deleted>true</deleted>
+    <on-ambari-upgrade add="false"/>
   </property>
   <property>
     <name>nifi.sensitive.props.algorithm</name>

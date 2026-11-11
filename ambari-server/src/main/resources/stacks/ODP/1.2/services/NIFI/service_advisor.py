@@ -81,18 +81,13 @@ class NIFI170ServiceAdvisor(service_advisor.ServiceAdvisor):
         if nifi2 and algorithm not in NIFI2_SENSITIVE_PROPS_ALGORITHMS:
             items.append({"config-name": "nifi.sensitive.props.algorithm", "item": self.getErrorItem(
                 "NiFi 2.x supports only NIFI_PBKDF2_AES_GCM_256 and NIFI_ARGON2_AES_GCM_256.")})
-        # an existing cluster's password reaches the advisor masked (SECRET:...), so only typed values are measured
-        key = properties.get("nifi.sensitive.props.key") or ""
-        if key and not key.startswith("SECRET:") and len(key) < SENSITIVE_PROPS_KEY_MIN_LENGTH \
-                and (nifi2 or algorithm in NIFI2_SENSITIVE_PROPS_ALGORITHMS):
-            items.append({"config-name": "nifi.sensitive.props.key", "item": self.getErrorItem(
-                "NiFi requires a sensitive properties key of at least {0} characters.".format(SENSITIVE_PROPS_KEY_MIN_LENGTH))})
         return problems + self.toConfigurationValidationProblems(items, "nifi-properties")
 
     def validateSensitivePropsKey(self, ambari_config, nifi_properties, services, config_type):
         """The key in nifi-ambari-config is the one NiFi uses (the scripts write it into nifi.properties)."""
         key = (ambari_config or {}).get("nifi.sensitive.props.key") or ""
         algorithm = nifi_properties.get("nifi.sensitive.props.algorithm") or ""
+        # an existing cluster's password reaches the advisor masked (SECRET:...), so only typed values are measured
         if key and not key.startswith("SECRET:") and len(key) < SENSITIVE_PROPS_KEY_MIN_LENGTH \
                 and (self.isNiFi2(services) or algorithm in NIFI2_SENSITIVE_PROPS_ALGORITHMS):
             return self.toConfigurationValidationProblems([{"config-name": "nifi.sensitive.props.key", "item": self.getErrorItem(
