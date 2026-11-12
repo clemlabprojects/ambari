@@ -106,6 +106,9 @@ if 'nifi_ca_hosts' in master_configs:
     if len(nifi_ca_hosts) > 0:
         nifi_ca_host = nifi_ca_hosts[0]
 
+#property that is set to hostname regardless of whether SSL enabled (the SSL block below uses it)
+nifi_registry_host = socket.getfqdn()
+
 ### SSL ####
 # nifi_registry_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
 nifi_registry_ambari_ssl_enabled = config['configurations']['nifi-registry-ambari-ssl-config']['nifi.registry.ssl.isenabled']
@@ -149,9 +152,6 @@ nifi_registry_ssl_config_content = config['configurations']['nifi-registry-ambar
 #default keystore/truststore type if empty
 nifi_registry_keystoreType = 'jks' if len(nifi_registry_keystoreType) == 0 else nifi_registry_keystoreType
 nifi_registry_truststoreType = 'jks' if len(nifi_registry_truststoreType) == 0 else nifi_registry_truststoreType
-
-#property that is set to hostname regardless of whether SSL enabled
-nifi_registry_host = socket.getfqdn()
 
 if nifi_registry_ssl_enabled is False:
     nifi_registry_ssl_host = nifi_registry_host
@@ -215,6 +215,9 @@ nifi_registry_logback_content = config['configurations']['nifi-registry-logback-
 # params from nifi-registry-properties-env
 nifi_registry_master_properties_content = config['configurations']['nifi-registry-master-properties-env']['content']
 nifi_registry_properties = config['configurations']['nifi-registry-properties'].copy()
+# the TLS settings of nifi-registry-ambari-ssl-config: an empty needClientAuth makes NiFi Registry require client certificates
+if nifi_registry_ambari_ssl_enabled:
+    nifi_registry_properties['nifi.registry.security.needClientAuth'] = str(nifi_registry_needClientAuth).lower()
 
 #kerberos params
 nifi_registry_kerberos_authentication_expiration = config['configurations']['nifi-registry-properties']['nifi.registry.kerberos.spnego.authentication.expiration']
