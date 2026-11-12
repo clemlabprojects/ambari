@@ -565,6 +565,7 @@ if has_ranger_admin:
   if stack_supports_ranger_kerberos and security_enabled:
     nifi_ranger_plugin_config['policy.download.auth.users'] = nifi_user
     nifi_ranger_plugin_config['tag.download.auth.users'] = nifi_user
+    nifi_ranger_plugin_config['userstore.download.auth.users'] = nifi_user
     ranger_nifi_principal = config['configurations']['nifi-properties']['nifi.kerberos.service.principal'].replace('_HOST',_hostname_lowercase)
     ranger_nifi_keytab = config['configurations']['nifi-properties']['nifi.kerberos.service.keytab.location']
 
@@ -593,6 +594,17 @@ if has_ranger_admin:
     xa_audit_db_is_enabled = False
 
   nifi_authorizer = 'ranger-provider'
+
+# default Ranger policies (nifi_ranger_policies.py)
+ranger_nifi_default_policies = has_ranger_admin and enable_ranger_nifi and \
+  str(default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.default.policies.enabled', True)).lower() == 'true'
+nifi_ranger_admin_groups = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.admin.groups', 'nifiadmin')
+nifi_ranger_admin_users = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.admin.users', '')
+nifi_ranger_user_groups = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.user.groups', 'public')
+# Ranger policies name users as Ranger knows them (short names): without a mapping NiFi would send user@REALM
+if security_enabled and has_ranger_admin and enable_ranger_nifi and not nifi_properties.get('nifi.security.identity.mapping.pattern.kerb'):
+  nifi_properties['nifi.security.identity.mapping.pattern.kerb'] = '^(.*?)@(.*?)$'
+  nifi_properties['nifi.security.identity.mapping.value.kerb'] = '$1'
 
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user'] if has_namenode else None
 hdfs_user_keytab = config['configurations']['hadoop-env']['hdfs_user_keytab'] if has_namenode else None

@@ -195,4 +195,44 @@
         </value-attributes>
         <on-ambari-upgrade add="true"/>
     </property>
+    <property>
+        <name>nifi.ranger.default.policies.enabled</name>
+        <value>true</value>
+        <display-name>Create default Ranger policies</display-name>
+        <description>At every NiFi start, Ambari ensures the policies nifi - nodes, nifi - admins and nifi - users in the Ranger NiFi service (labelled ambari-managed). It only adds what they lack and never removes anything, so changes made in Ranger stay.</description>
+        <value-attributes>
+            <type>boolean</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>nifi.ranger.admin.groups</name>
+        <value>nifiadmin</value>
+        <display-name>NiFi administrator groups</display-name>
+        <description>Comma-separated Ranger groups given every NiFi permission (policy nifi - admins). Missing groups are created in Ranger.</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>nifi.ranger.admin.users</name>
+        <value></value>
+        <display-name>NiFi administrator users</display-name>
+        <description>Comma-separated Ranger users given every NiFi permission (policy nifi - admins), in addition to the initial admin identity. Missing users are created in Ranger.</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>nifi.ranger.user.groups</name>
+        <value>public</value>
+        <display-name>NiFi user groups</display-name>
+        <description>Comma-separated Ranger groups allowed to open the NiFi UI and read the root process group, system diagnostics, counters and provenance (policy nifi - users). public means every user.</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
 </configuration>

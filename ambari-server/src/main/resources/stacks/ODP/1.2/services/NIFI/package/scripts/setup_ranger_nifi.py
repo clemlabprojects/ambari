@@ -87,7 +87,12 @@ def setup_ranger_nifi(upgrade_type=None):
         #change permissions of ranger xml that were written to 0400
         File(os.path.join(params.nifi_config_dir, 'ranger-nifi-audit.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
         File(os.path.join(params.nifi_config_dir, 'ranger-nifi-security.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
-        File(os.path.join(params.nifi_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)        
+        File(os.path.join(params.nifi_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_user, group=params.nifi_group, mode=0o400)
+
+        # Ambari created the Ranger service without any policy: without them nobody, not even the nodes, can use NiFi
+        if upgrade_type is None:
+            from nifi_ranger_policies import ensure_default_policies
+            ensure_default_policies()
 
     else:
         Logger.info('Ranger admin not installed')
