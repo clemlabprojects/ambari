@@ -98,5 +98,65 @@ def setup_ranger_nifi_registry(upgrade_type=None):
         File(os.path.join(params.nifi_registry_config_dir, 'ranger-nifi-registry-security.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
         File(os.path.join(params.nifi_registry_config_dir, 'ranger-policymgr-ssl.xml'), owner=params.nifi_registry_user, group=params.nifi_registry_group, mode=0o400)
 
+        # Ambari created the Ranger service without any policy: without them nobody, not even NiFi, can use the registry
+        if upgrade_type is None:
+            ensure_default_policies()
+
     else:
         Logger.info('Skipping Ranger integration for NiFi Registry setup.')
+
+
+REGISTRY_RESOURCE = 'nifi-registry-resource'
+ADMINS_POLICY = 'nifi-registry - admins'
+# kept equal to nifi_ranger_policies.py in the NIFI service
+NIFI_NODES_POLICY = 'nifi - nodes'
+REGISTRY_PROXY_POLICY = 'nifi-registry - nifi nodes proxy'
+REGISTRY_BUCKETS_POLICY = 'nifi-registry - nifi nodes buckets'
+DESCRIPTION = 'Created by Ambari (default NiFi Registry policies); Ambari only adds to it'
+
+
+def _split_list(value):
+    return [item.strip() for item in (value or '').split(',') if item.strip()]
+
+
+def ensure_default_policies():
+    """Ensures the administrators policy and grants the NiFi nodes (found in the policy 'nifi - nodes' they add themselves
+    to when NiFi starts, before NiFi Registry) the right to proxy users and read buckets. Idempotent, only adds; a Ranger
+    problem is logged, and retried at the next start."""
+    import params
+    from resource_management.libraries.functions.ranger_default_policies import (
+        RangerDefaultPolicies, RangerDefaultPoliciesError, policy_item)
+    if not params.ranger_nifi_registry_default_policies:
+        Logger.info("Default Ranger policies for NiFi Registry are disabled (nifi.registry.ranger.default.policies.enabled)")
+        return
+    if not params.nifi_registry_ssl_enabled:
+        Logger.info("NiFi Registry runs without TLS, so it authorizes nobody: no default Ranger policy is needed")
+        return
+    try:
+        ranger = RangerDefaultPolicies(params.policymgr_mgr_url, params.ranger_admin_username, params.ranger_admin_password)
+        if ranger.get_service(params.repo_name) is None:
+            Logger.warning("The Ranger service {0} does not exist yet: default NiFi Registry policies are created at the next start".format(params.repo_name))
+            return
+        if params.security_enabled:
+            ranger.ensure_service_config_users(params.repo_name, ['policy.download.auth.users', 'tag.download.auth.users',
+                                                                  'userstore.download.auth.users'], [params.nifi_registry_user])
+        admin_users = _split_list(params.nifi_registry_ranger_admin_users) + \
+            ([params.nifi_registry_initial_admin_id] if params.nifi_registry_initial_admin_id else [])
+        admin_groups = _split_list(params.nifi_registry_ranger_admin_groups)
+        ranger.ensure_groups(admin_groups)
+        ranger.ensure_users(admin_users)
+        if admin_users or admin_groups:
+            ranger.ensure_policy(params.repo_name, ADMINS_POLICY, {REGISTRY_RESOURCE: ['*']},
+                                 [policy_item(['READ', 'WRITE', 'DELETE'], users=admin_users, groups=admin_groups, delegate_admin=True)],
+                                 DESCRIPTION)
+        nodes_policy = ranger.get_policy(params.nifi_ranger_service, NIFI_NODES_POLICY) if ranger.get_service(params.nifi_ranger_service) else None
+        nodes = sorted(set(u for item in (nodes_policy or {}).get('policyItems') or [] for u in item.get('users') or []))
+        if nodes:
+            ranger.ensure_users(nodes)
+            ranger.ensure_policy(params.repo_name, REGISTRY_PROXY_POLICY, {REGISTRY_RESOURCE: ['/proxy']},
+                                 [policy_item(['READ', 'WRITE', 'DELETE'], users=nodes)], DESCRIPTION)
+            ranger.ensure_policy(params.repo_name, REGISTRY_BUCKETS_POLICY, {REGISTRY_RESOURCE: ['/buckets']},
+                                 [policy_item(['READ'], users=nodes)], DESCRIPTION)
+            Logger.info("NiFi nodes allowed to proxy users and read buckets: {0}".format(', '.join(nodes)))
+    except RangerDefaultPoliciesError as e:
+        Logger.warning("Unable to ensure the default Ranger policies of NiFi Registry, retried at the next start: {0}".format(e))

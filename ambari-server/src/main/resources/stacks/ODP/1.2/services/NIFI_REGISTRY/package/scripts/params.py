@@ -427,6 +427,7 @@ if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
     if stack_supports_ranger_kerberos and security_enabled:
         nifi_registry_ranger_plugin_config['policy.download.auth.users'] = nifi_registry_user
         nifi_registry_ranger_plugin_config['tag.download.auth.users'] = nifi_registry_user
+        nifi_registry_ranger_plugin_config['userstore.download.auth.users'] = nifi_registry_user
         if 'nifi.registry.kerberos.service.principal' in config['configurations']['nifi-registry-properties']:
             ranger_nifi_registry_principal = config['configurations']['nifi-registry-properties']['nifi.registry.kerberos.service.principal'].replace('_HOST',_hostname_lowercase)
         if 'nifi.registry.kerberos.service.keytab.location' in config['configurations']['nifi-registry-properties']:
@@ -458,6 +459,18 @@ if has_ranger_admin and ranger_nifi_registry_plugin_is_available:
 
     if enable_ranger_nifi_registry:
         nifi_registry_authorizer = 'ranger-authorizer'
+
+# default Ranger policies (setup_ranger_nifi_registry.py)
+ranger_nifi_registry_default_policies = has_ranger_admin and ranger_nifi_registry_plugin_is_available and enable_ranger_nifi_registry and \
+    str(default('/configurations/ranger-nifi-registry-plugin-properties/nifi.registry.ranger.default.policies.enabled', True)).lower() == 'true'
+nifi_registry_ranger_admin_groups = default('/configurations/ranger-nifi-registry-plugin-properties/nifi.registry.ranger.admin.groups', 'nifiadmin')
+nifi_registry_ranger_admin_users = default('/configurations/ranger-nifi-registry-plugin-properties/nifi.registry.ranger.admin.users', '')
+nifi_ranger_service = str(config['clusterName']) + '_nifi'
+# Ranger policies name users as Ranger knows them (short names): without a mapping NiFi Registry would send user@REALM
+if security_enabled and has_ranger_admin and ranger_nifi_registry_plugin_is_available and enable_ranger_nifi_registry \
+        and not nifi_registry_properties.get('nifi.registry.security.identity.mapping.pattern.kerb'):
+    nifi_registry_properties['nifi.registry.security.identity.mapping.pattern.kerb'] = '^(.*?)@(.*?)$'
+    nifi_registry_properties['nifi.registry.security.identity.mapping.value.kerb'] = '$1'
 
 has_namenode = not namenode_host == None
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user'] if has_namenode else None

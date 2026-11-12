@@ -38,11 +38,15 @@ from resource_management.libraries.functions.ranger_default_policies import (
   RangerDefaultPolicies, RangerDefaultPoliciesError, policy_item)
 
 NIFI_RESOURCE = 'nifi-resource'
+REGISTRY_RESOURCE = 'nifi-registry-resource'
 NODES_POLICY = 'nifi - nodes'
 ADMINS_POLICY = 'nifi - admins'
 USERS_POLICY = 'nifi - users'
 WORKSPACE_POLICY = 'nifi - workspace - {0}'
+REGISTRY_PROXY_POLICY = 'nifi-registry - nifi nodes proxy'
+REGISTRY_BUCKETS_POLICY = 'nifi-registry - nifi nodes buckets'
 NIFI_MAPPING_PREFIX = 'nifi.security.identity.mapping.'
+REGISTRY_MAPPING_PREFIX = 'nifi.registry.security.identity.mapping.'
 # the nodes proxy users and replicate requests; they also list and create the workspace process groups
 NODE_RESOURCES = ['/proxy', '/data/*', '/flow', '/process-groups/*']
 USER_RESOURCES = ['/flow', '/system', '/counters', '/provenance']
@@ -132,6 +136,18 @@ def node_identity(params):
   return dn, (map_identity(dn, params.nifi_properties, NIFI_MAPPING_PREFIX) if dn else None)
 
 
+def ensure_registry_node_policies(ranger, registry_service, identities):
+  identities = [i for i in identities if i]
+  if not identities or ranger.get_service(registry_service) is None:
+    return False
+  ranger.ensure_users(identities)
+  ranger.ensure_policy(registry_service, REGISTRY_PROXY_POLICY, {REGISTRY_RESOURCE: ['/proxy']},
+                       [policy_item(['READ', 'WRITE', 'DELETE'], users=identities)], DESCRIPTION)
+  ranger.ensure_policy(registry_service, REGISTRY_BUCKETS_POLICY, {REGISTRY_RESOURCE: ['/buckets']},
+                       [policy_item(['READ'], users=identities)], DESCRIPTION)
+  return True
+
+
 def ensure_default_policies(strict=False):
   """Called at every NiFi start, after the Ranger service exists. A Ranger problem is logged, not fatal, unless strict:
   NiFi still starts, and the next start tries again."""
@@ -170,6 +186,10 @@ def ensure_default_policies(strict=False):
       ranger.ensure_policy(params.repo_name, USERS_POLICY,
                            {NIFI_RESOURCE: USER_RESOURCES + (['/process-groups/' + root] if root else [])},
                            [policy_item(['READ'], groups=user_groups)], DESCRIPTION)
+    if dn and params.nifi_registry_ranger_service:
+      registry_node = map_identity(dn, params.nifi_registry_properties, REGISTRY_MAPPING_PREFIX)
+      if not ensure_registry_node_policies(ranger, params.nifi_registry_ranger_service, [registry_node]):
+        Logger.info("The Ranger NiFi Registry service does not exist yet: NiFi Registry grants this node access when it starts")
     return node
   except RangerDefaultPoliciesError as e:
     if strict:

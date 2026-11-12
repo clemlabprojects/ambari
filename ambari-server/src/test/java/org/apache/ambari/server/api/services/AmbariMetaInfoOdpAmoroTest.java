@@ -200,6 +200,24 @@ public class AmbariMetaInfoOdpAmoroTest {
     }
   }
 
+  @Test
+  public void testNifiRangerDefaultPolicySettings() throws Exception {
+    ServiceInfo nifi = metaInfo.getService("ODP", "1.3", "NIFI");
+    assertNotNull(findComponent(nifi.getComponents(), "NIFI_MASTER").getCustomCommandByName("SYNC_WORKSPACES"));
+    Map<String, String> defaults = new LinkedHashMap<>();
+    for (PropertyInfo property : nifi.getProperties()) {
+      defaults.put(property.getFilename() + "/" + property.getName(), property.getValue());
+    }
+    for (PropertyInfo property : metaInfo.getService("ODP", "1.3", "NIFI_REGISTRY").getProperties()) {
+      defaults.put(property.getFilename() + "/" + property.getName(), property.getValue());
+    }
+    assertEquals("nifiadmin", defaults.get("ranger-nifi-plugin-properties.xml/nifi.ranger.admin.groups"));
+    assertEquals("public", defaults.get("ranger-nifi-plugin-properties.xml/nifi.ranger.user.groups"));
+    assertEquals("true", defaults.get("ranger-nifi-security.xml/ranger.plugin.nifi.use.rangerGroups"));
+    assertEquals("nifiadmin", defaults.get("ranger-nifi-registry-plugin-properties.xml/nifi.registry.ranger.admin.groups"));
+    assertEquals("true", defaults.get("ranger-nifi-registry-security.xml/ranger.plugin.nifi-registry.use.rangerGroups"));
+  }
+
   private static ComponentInfo findComponent(List<ComponentInfo> components, String name) {
     for (ComponentInfo component : components) {
       if (name.equals(component.getName())) {

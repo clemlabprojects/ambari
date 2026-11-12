@@ -602,6 +602,11 @@ nifi_ranger_admin_groups = default('/configurations/ranger-nifi-plugin-propertie
 nifi_ranger_admin_users = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.admin.users', '')
 nifi_ranger_user_groups = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.user.groups', 'public')
 nifi_ranger_workspaces = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.workspaces', '')
+nifi_registry_properties = default('/configurations/nifi-registry-properties', {})
+nifi_registry_ranger_service = None
+if has_ranger_admin and default("/clusterHostInfo/nifi_registry_master_hosts", []) and \
+    str(default('/configurations/ranger-nifi-registry-plugin-properties/ranger-nifi-registry-plugin-enabled', 'No')).lower() == 'yes':
+  nifi_registry_ranger_service = str(config['clusterName']) + '_nifi_registry'
 # Ranger policies name users as Ranger knows them (short names): without a mapping NiFi would send user@REALM
 if security_enabled and has_ranger_admin and enable_ranger_nifi and not nifi_properties.get('nifi.security.identity.mapping.pattern.kerb'):
   nifi_properties['nifi.security.identity.mapping.pattern.kerb'] = '^(.*?)@(.*?)$'

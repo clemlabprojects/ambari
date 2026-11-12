@@ -94,4 +94,24 @@
         </description>
         <on-ambari-upgrade add="true"/>
     </property>
+    <property>
+        <name>ranger.plugin.nifi-registry.enable.implicit.userstore.enricher</name>
+        <value>true</value>
+        <display-name>Download Ranger users and groups</display-name>
+        <description>The plugin downloads the users and groups known to Ranger, needed by use.rangerGroups.</description>
+        <value-attributes>
+            <type>boolean</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>ranger.plugin.nifi-registry.use.rangerGroups</name>
+        <value>true</value>
+        <display-name>Use Ranger groups</display-name>
+        <description>Resolve the groups of the requesting user from Ranger: NiFi Registry itself passes none to Ranger, so group policies (nifiadmin) would never match.</description>
+        <value-attributes>
+            <type>boolean</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
 </configuration>

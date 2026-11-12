@@ -190,4 +190,34 @@
         <description>Nifi Registry Ranger plugin default ssl context use</description>
         <on-ambari-upgrade add="true"/>
     </property>
+    <property>
+        <name>nifi.registry.ranger.default.policies.enabled</name>
+        <value>true</value>
+        <display-name>Create default Ranger policies</display-name>
+        <description>At every NiFi Registry start, Ambari ensures the policy nifi-registry - admins, and the policies letting the NiFi nodes proxy users and read buckets, in the Ranger NiFi Registry service (labelled ambari-managed). It only adds what they lack and never removes anything.</description>
+        <value-attributes>
+            <type>boolean</type>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>nifi.registry.ranger.admin.groups</name>
+        <value>nifiadmin</value>
+        <display-name>NiFi Registry administrator groups</display-name>
+        <description>Comma-separated Ranger groups given every NiFi Registry permission (policy nifi-registry - admins). Missing groups are created in Ranger.</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
+    <property>
+        <name>nifi.registry.ranger.admin.users</name>
+        <value></value>
+        <display-name>NiFi Registry administrator users</display-name>
+        <description>Comma-separated Ranger users given every NiFi Registry permission (policy nifi-registry - admins), in addition to the initial admin identity. Missing users are created in Ranger.</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
 </configuration>
