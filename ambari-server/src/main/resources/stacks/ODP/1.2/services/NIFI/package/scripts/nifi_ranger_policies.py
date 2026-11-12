@@ -236,15 +236,18 @@ def _child_groups(cli, root):
 
 
 def sync_workspaces():
-  """Creates the missing workspace process groups and ensures their policies. Runs on the first NiFi host only, so
-  two hosts never create the same group; running it again changes nothing."""
+  """Creates the missing workspace process groups and ensures their policies; running it again changes nothing.
+  The NiFi service Actions menu sends the command to one NiFi host, any of them, and that host does the work. Sent to
+  several hosts at once, they take turns (30 s apart, in host name order) so the later ones find the groups created
+  by the first instead of creating them twice."""
   import params
   if not (params.has_ranger_admin and params.enable_ranger_nifi and params.nifi_ssl_enabled):
     raise Fail("NiFi workspaces need the Ranger NiFi plugin and TLS")
-  first = sorted(h.lower() for h in params.nifi_master_hosts)[0]
-  if params.nifi_node_host.lower() != first:
-    Logger.info("NiFi workspaces are synchronized by {0}".format(first))
-    return
+  hosts = sorted(h.lower() for h in params.nifi_master_hosts)
+  turn = hosts.index(params.nifi_node_host.lower()) if params.nifi_node_host.lower() in hosts else 0
+  if turn:
+    Logger.info("Waiting {0} s in case other NiFi hosts synchronize the workspaces too".format(turn * 30))
+    time.sleep(turn * 30)
   workspaces = parse_workspaces(params.nifi_ranger_workspaces)
   if not workspaces:
     Logger.info("No NiFi workspace is configured (nifi.ranger.workspaces)")
