@@ -127,6 +127,12 @@ class Master(Script):
         File(format("{params.nifi_flow_config_dir}/flow.json"), content=flow_content, owner=params.nifi_user, group=params.nifi_group, mode=0o600)
         Execute(format("cd {params.nifi_flow_config_dir}; gzip flow.json;"), user=params.nifi_user)
 
+  def sync_workspaces(self, env):
+    """Creates the missing NiFi workspaces (nifi.ranger.workspaces) and ensures their Ranger policies."""
+    import params
+    env.set_params(params)
+    from nifi_ranger_policies import sync_workspaces
+    sync_workspaces()
 
   def stop(self, env, upgrade_type=None):
     import params

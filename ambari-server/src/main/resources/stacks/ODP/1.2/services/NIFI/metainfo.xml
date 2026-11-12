@@ -93,6 +93,16 @@
                     <scriptType>PYTHON</scriptType>
                     <timeout>10000</timeout>
                   </commandScript>
+                  <customCommands>
+                    <customCommand>
+                      <name>SYNC_WORKSPACES</name>
+                      <commandScript>
+                        <script>scripts/nifi.py</script>
+                        <scriptType>PYTHON</scriptType>
+                        <timeout>900</timeout>
+                      </commandScript>
+                    </customCommand>
+                  </customCommands>
                 </component>
             </components>
 

@@ -235,4 +235,14 @@
         </value-attributes>
         <on-ambari-upgrade add="true"/>
     </property>
+    <property>
+        <name>nifi.ranger.workspaces</name>
+        <value></value>
+        <display-name>NiFi workspaces</display-name>
+        <description>Workspaces created by the Sync NiFi Workspaces action: comma-separated entries name[=owner;owner...], an owner starting with @ being a group (alice, etl=@etl-team;bob). Each gets a process group under the root group and the Ranger policy nifi - workspace - name giving its owners read and write on it. Without owners, the name is the owner.</description>
+        <value-attributes>
+            <empty-value-valid>true</empty-value-valid>
+        </value-attributes>
+        <on-ambari-upgrade add="true"/>
+    </property>
 </configuration>

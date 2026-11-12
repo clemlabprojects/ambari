@@ -595,12 +595,13 @@ if has_ranger_admin:
 
   nifi_authorizer = 'ranger-provider'
 
-# default Ranger policies (nifi_ranger_policies.py)
+# default Ranger policies and workspaces (nifi_ranger_policies.py)
 ranger_nifi_default_policies = has_ranger_admin and enable_ranger_nifi and \
   str(default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.default.policies.enabled', True)).lower() == 'true'
 nifi_ranger_admin_groups = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.admin.groups', 'nifiadmin')
 nifi_ranger_admin_users = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.admin.users', '')
 nifi_ranger_user_groups = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.user.groups', 'public')
+nifi_ranger_workspaces = default('/configurations/ranger-nifi-plugin-properties/nifi.ranger.workspaces', '')
 # Ranger policies name users as Ranger knows them (short names): without a mapping NiFi would send user@REALM
 if security_enabled and has_ranger_admin and enable_ranger_nifi and not nifi_properties.get('nifi.security.identity.mapping.pattern.kerb'):
   nifi_properties['nifi.security.identity.mapping.pattern.kerb'] = '^(.*?)@(.*?)$'

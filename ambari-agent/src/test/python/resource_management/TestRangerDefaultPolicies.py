@@ -139,6 +139,14 @@ class TestNifiRangerPolicies(TestCase):
     self.assertEqual('W1.EXAMPLE', self.m.map_identity('CN=w1.example, O=Clemlab, C=FR', props, prefix))
     self.assertEqual('CN=w1, O=x', self.m.map_identity('CN=w1, O=x', {}, prefix))
 
+  def test_workspaces(self):
+    self.assertEqual([('alice', ['alice'], []), ('etl', ['bob'], ['etl-team'])],
+                     self.m.parse_workspaces(' alice , etl=@etl-team;bob '))
+    self.assertEqual([], self.m.parse_workspaces(''))
+    from resource_management.core.exceptions import Fail
+    with self.assertRaises(Fail):
+      self.m.parse_workspaces('bad name')
+
   def test_keystore_owner_is_the_key_entry(self):
     out = ('Keystore type: JKS\n\nAlias name: ca\nEntry type: trustedCertEntry\n\nOwner: CN=Clemlab CA, O=Clemlab\n'
            '\nAlias name: worker11\nEntry type: PrivateKeyEntry\nCertificate chain length: 2\nCertificate[1]:\n'

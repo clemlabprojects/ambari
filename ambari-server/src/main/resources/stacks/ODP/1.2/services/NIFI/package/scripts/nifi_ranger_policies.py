@@ -16,11 +16,12 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Default Ranger policies of NiFi.
+Default Ranger policies of NiFi, and the NiFi workspaces (one process group per user or team, with its own policy).
 
 Ambari creates the Ranger NiFi service but no policy, so nobody, not even the nodes, could use NiFi. At every start
 each node ensures the Ambari-managed policies and adds its own identity (the owner of its keystore certificate, after
-NiFi's identity mappings) to the node policy.
+NiFi's identity mappings) to the node policy. NiFi treats a resource without an exact policy as "inherit from the
+parent", so a workspace policy on its process group also denies it to everyone else.
 """
 import gzip
 import json
@@ -28,6 +29,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 
 from resource_management.core import shell, sudo
 from resource_management.core.exceptions import Fail
@@ -39,10 +41,12 @@ NIFI_RESOURCE = 'nifi-resource'
 NODES_POLICY = 'nifi - nodes'
 ADMINS_POLICY = 'nifi - admins'
 USERS_POLICY = 'nifi - users'
+WORKSPACE_POLICY = 'nifi - workspace - {0}'
 NIFI_MAPPING_PREFIX = 'nifi.security.identity.mapping.'
-# the nodes proxy users and replicate requests
+# the nodes proxy users and replicate requests; they also list and create the workspace process groups
 NODE_RESOURCES = ['/proxy', '/data/*', '/flow', '/process-groups/*']
 USER_RESOURCES = ['/flow', '/system', '/counters', '/provenance']
+WORKSPACE_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 DESCRIPTION = 'Created by Ambari (default NiFi policies); Ambari only adds to it'
 
 
@@ -105,6 +109,19 @@ def root_group_id(flow_dir):
   return None
 
 
+def parse_workspaces(value):
+  """'alice, etl=@etl-team;bob' -> [('alice', ['alice'], []), ('etl', ['bob'], ['etl-team'])]"""
+  workspaces = []
+  for entry in split_list(value):
+    name, _, owners = entry.partition('=')
+    name = name.strip()
+    if not WORKSPACE_NAME.match(name):
+      raise Fail("Invalid NiFi workspace name '{0}' in nifi.ranger.workspaces".format(name))
+    owners = [o.strip() for o in owners.split(';') if o.strip()] or [name]
+    workspaces.append((name, [o for o in owners if not o.startswith('@')], [o[1:] for o in owners if o.startswith('@')]))
+  return workspaces
+
+
 def _ranger(params):
   return RangerDefaultPolicies(params.policymgr_mgr_url, params.ranger_admin_username, params.ranger_admin_password)
 
@@ -160,3 +177,81 @@ def ensure_default_policies(strict=False):
     Logger.warning("Unable to ensure the default Ranger policies of NiFi, retried at the next start: {0}".format(e))
     return None
 
+
+class NifiCli(object):
+  """The NiFi toolkit CLI as this node (its keystore), with the TLS settings in a file readable by root only."""
+
+  def __init__(self, params):
+    self.params = params
+    self.work = tempfile.mkdtemp()
+    self.properties = os.path.join(self.work, 'cli.properties')
+    values = {'baseUrl': 'https://{0}:{1}'.format(params.nifi_node_host, params.nifi_node_ssl_port),
+              'keystore': params.nifi_keystore, 'keystoreType': params.nifi_keystoreType,
+              'keystorePasswd': params.nifi_keystorePasswd, 'keyPasswd': params.nifi_keyPasswd or params.nifi_keystorePasswd,
+              'truststore': params.nifi_truststore, 'truststoreType': params.nifi_truststoreType,
+              'truststorePasswd': params.nifi_truststorePasswd}
+    with os.fdopen(os.open(self.properties, os.O_WRONLY | os.O_CREAT, 0o600), 'w') as f:
+      f.write(''.join('{0}={1}\n'.format(k, v) for k, v in values.items()))
+
+  def close(self):
+    shutil.rmtree(self.work, ignore_errors=True)
+
+  def run(self, *args, **kwargs):
+    """Retries while NiFi starts or while its Ranger plugin has not loaded the node policy yet (it polls every 30 s)."""
+    deadline = time.time() + kwargs.get('wait', 180)
+    cmd = (os.path.join(self.params.stack_root, 'current', 'nifi-toolkit', 'bin', 'cli.sh'), 'nifi') + args + ('-p', self.properties)
+    while True:
+      code, out = shell.call(cmd, sudo=True, quiet=True, logoutput=False, env={'JAVA_HOME': self.params.jdk64_home})
+      if code == 0:
+        return out
+      if time.time() > deadline:
+        raise Fail("NiFi CLI '{0}' failed: {1}".format(' '.join(args), (out or '').strip()[-1000:]))
+      time.sleep(10)
+
+
+def _child_groups(cli, root):
+  out = cli.run('pg-list', '-pgid', root, '-ot', 'json')
+  groups = json.loads(out[out.find('['):] if '[' in out else '[]')
+  return {(g.get('component') or g).get('name'): g.get('id') or (g.get('component') or {}).get('id') for g in groups}
+
+
+def sync_workspaces():
+  """Creates the missing workspace process groups and ensures their policies. Runs on the first NiFi host only, so
+  two hosts never create the same group; running it again changes nothing."""
+  import params
+  if not (params.has_ranger_admin and params.enable_ranger_nifi and params.nifi_ssl_enabled):
+    raise Fail("NiFi workspaces need the Ranger NiFi plugin and TLS")
+  first = sorted(h.lower() for h in params.nifi_master_hosts)[0]
+  if params.nifi_node_host.lower() != first:
+    Logger.info("NiFi workspaces are synchronized by {0}".format(first))
+    return
+  workspaces = parse_workspaces(params.nifi_ranger_workspaces)
+  if not workspaces:
+    Logger.info("No NiFi workspace is configured (nifi.ranger.workspaces)")
+    return
+  if not ensure_default_policies(strict=True):
+    raise Fail("This node has no identity in Ranger: it cannot create the workspaces")
+  root = root_group_id(params.nifi_flow_config_dir)
+  if not root:
+    raise Fail("NiFi has no flow yet: start NiFi before synchronizing the workspaces")
+  ranger = _ranger(params)
+  cli = NifiCli(params)
+  try:
+    existing = _child_groups(cli, root)
+    for name, users, groups in workspaces:
+      group_id = existing.get(name)
+      if not group_id:
+        group_id = cli.run('pg-create', '-pgn', name).strip().splitlines()[-1].strip()
+        Logger.info("Created the NiFi workspace process group '{0}' ({1})".format(name, group_id))
+      try:
+        ranger.ensure_groups(groups)
+        ranger.ensure_users(users)
+        ranger.ensure_policy(params.repo_name, WORKSPACE_POLICY.format(name),
+                             {NIFI_RESOURCE: [p + group_id for p in ('/process-groups/', '/data/process-groups/',
+                                                                      '/provenance-data/process-groups/', '/operation/process-groups/')]},
+                             [policy_item(['READ', 'WRITE'], users=users, groups=groups)], DESCRIPTION)
+      except RangerDefaultPoliciesError as e:
+        raise Fail("Unable to ensure the Ranger policy of the NiFi workspace {0}: {1}".format(name, e))
+      Logger.info("NiFi workspace '{0}': owners {1}".format(name, ', '.join(users + ['@' + g for g in groups])))
+  finally:
+    cli.close()
