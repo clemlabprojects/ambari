@@ -306,7 +306,7 @@ export const getChartsJSON = (): any => {
   return {
   "clemlab-trino": {
     "label": "Trino",
-    "chart": "trinodb/trino",
+    "chart": "trino",
     "secretName": "registry-credentials",
     "version": "1.41.0",
     "dynamicValues": [

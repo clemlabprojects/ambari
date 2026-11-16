@@ -1,8 +1,8 @@
 {
   "label": "Trino",
-  "chart": "trinodb/trino",
+  "chart": "trino",
   "secretName": "registry-credentials",
-  "version": "1.43.21",
+  "version": "1.44.0",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
