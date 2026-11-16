@@ -15,6 +15,7 @@
 #
 # The plan CommandServiceGoldenPlanTest expects for TRINO-secure: one step per line, in plan order, with its key
 # parameters indented below it. Lines starting with '#' are ignored.
+INGRESS_TLS_SELFSIGN
 RANGER_REPOSITORY_CREATION
     _rangerRepositoryName = trino-analytics
     _rangerServiceType = trino

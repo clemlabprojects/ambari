@@ -15,6 +15,7 @@
 #
 # The plan CommandServiceGoldenPlanTest expects for SUPERSET-plain: one step per line, in plan order, with its key
 # parameters indented below it. Lines starting with '#' are ignored.
+INGRESS_TLS_SELFSIGN
 HELM_REPO_LOGIN
     repoId = charts
 CONFIG_MATERIALIZE

@@ -439,6 +439,9 @@ class CommandServiceOidcAudiencePlanTest {
         request.setDeploymentMode("DIRECT_HELM");
         request.setSecurityProfile(profile);
         Map<String, Object> releaseValues = new LinkedHashMap<>(Map.of("replicaCount", 1));
+        // An Ingress with its own certificate: the OIDC callback is https, which a deploy without TLS cannot serve.
+        releaseValues.put("ingress", Map.of("enabled", true, "host", rel + ".example.org",
+                "tls", List.of(Map.of("secretName", rel + "-ingress-tls", "hosts", List.of(rel + ".example.org")))));
         releaseValues.putAll(values);
         request.setValues(releaseValues);
         request.setFormValues(new LinkedHashMap<>(formValues));

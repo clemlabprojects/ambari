@@ -186,6 +186,10 @@ final class DeployPlanningFixture implements AutoCloseable {
         Map<String, Object> ingress = new LinkedHashMap<>(Map.of("enabled", true, "host", host));
         request.setValues(new LinkedHashMap<>(Map.of("ingress", ingress)));
         request.setFormValues(new LinkedHashMap<>(Map.of("ingress", new LinkedHashMap<>(ingress))));
+        // The TLS mode the wizard preselects once the Ingress is on: a certificate signed by the Ambari Internal CA.
+        // Without one, a deploy with OIDC is refused (its https callback would have no certificate).
+        request.setIngressTlsSelfSign(new LinkedHashMap<>(Map.of("mode", "ambariInternal",
+                "secretName", release + "-ingress-tls", "ingressHost", host, "validityDays", 90)));
         return request;
     }
 

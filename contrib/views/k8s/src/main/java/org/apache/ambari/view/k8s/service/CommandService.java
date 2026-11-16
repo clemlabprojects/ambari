@@ -10231,6 +10231,8 @@ public class CommandService {
             LOG.info("Skipping command correlation ConfigMap; Kerberos injection mode is {}", kerberosInjectionMode);
         }
 
+        // The plan is complete: an OIDC client that could not be registered refuses it now, before anything runs.
+        refuseOidcWithoutIngressTls(rootCommand, commandStatusEntity);
         LOG.info("Queued DEPLOY_COMPOSITE id={} steps={} at {}", id, childCommands.size(), now);
         return id;
     }
@@ -12929,88 +12931,9 @@ public class CommandService {
                     // OIDC step plumbing was extended; keep the legacy alias as a fallback so old plans
                     // persisted to disk continue to validate correctly after a redeploy.
                     {
-                        String redirectUri = (String) childParams.get("oidcRedirectUri");
-                        if (redirectUri == null || redirectUri.isBlank()) {
-                            redirectUri = (String) childParams.get("redirectUri");
-                        }
-                        Object rootParamsRaw = rootParams; // resolved at function top
-                        String redirectScheme = (redirectUri != null && redirectUri.contains("://"))
-                                ? redirectUri.substring(0, redirectUri.indexOf("://")).toLowerCase()
-                                : "";
-                        // Service definitions declare how they expect TLS to be wired via
-                        // `securityCoupling.tlsProvisioning`:
-                        //   "k8s-view"       (default) — view participates in the unified ingress.tls[] pipeline
-                        //   "chart-managed"  — chart owns its own TLS (GitLab uses this)
-                        //   "external"       — operator manages TLS entirely outside, view stays hands-off
-                        // The preflight only enforces the ingress.tls[] check for the "k8s-view"
-                        // provisioning model; other models bypass it.
-                        // Backward compat: legacy `requireTls: false` is still read for one chart cycle.
-                        boolean skipIngressTlsCheck = false;
-                        try {
-                            String svcKey = (String) childParams.get("serviceKey");
-                            if (svcKey != null && !svcKey.isBlank()) {
-                                StackServiceDef preflightDef =
-                                        new StackDefinitionService(this.ctx).getServiceDefinition(svcKey);
-                                if (preflightDef != null && preflightDef.securityCoupling != null) {
-                                    Object tlsProv = preflightDef.securityCoupling.get("tlsProvisioning");
-                                    if (tlsProv != null) {
-                                        String s = String.valueOf(tlsProv).trim().toLowerCase();
-                                        if (!s.isEmpty() && !"k8s-view".equals(s)) {
-                                            skipIngressTlsCheck = true;
-                                        }
-                                    } else {
-                                        Object legacyRequireTls = preflightDef.securityCoupling.get("requireTls");
-                                        if (legacyRequireTls != null
-                                                && !"true".equalsIgnoreCase(String.valueOf(legacyRequireTls))
-                                                && !Boolean.TRUE.equals(legacyRequireTls)) {
-                                            skipIngressTlsCheck = true;
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (Exception ex) {
-                            LOG.debug("OIDC pre-flight: could not read securityCoupling, falling back to strict check: {}",
-                                    ex.toString());
-                        }
-                        if ("https".equals(redirectScheme) && !skipIngressTlsCheck) {
-                            // Look at the chart values that will be sent to Helm to confirm tls is present.
-                            Map<String, Object> chartVals = this.commandUtils.loadValuesFromParams(rootParams);
-                            Object ingress = (chartVals != null) ? chartVals.get("ingress") : null;
-                            boolean tlsConfigured = false;
-                            if (ingress instanceof Map<?, ?> ingMap) {
-                                Object tls = ingMap.get("tls");
-                                if (tls instanceof List<?> tlsList && !tlsList.isEmpty()) tlsConfigured = true;
-                                Object tlsSecret = ingMap.get("tlsSecret");
-                                if (tlsSecret instanceof String s && !s.isBlank()) tlsConfigured = true;
-                            }
-                            // Any TLS-provisioning sibling step counts as "TLS configured" — the Secret
-                            // will exist (or be reconciled) before HELM_DEPLOY actually rolls out:
-                            //   INGRESS_TLS_SELFSIGN          → view mints + writes Secret in-line
-                            //   INGRESS_TLS_CERTMANAGER       → view writes Certificate CR, cert-manager fills the Secret
-                            //   INGRESS_TLS_EXTERNAL_SECRET   → view writes ExternalSecret, ESO syncs from upstream store
-                            // We check the rootCommand child list for any of those step types.
-                            if (!tlsConfigured) {
-                                try {
-                                    Type listTy = new TypeToken<ArrayList<String>>(){}.getType();
-                                    List<String> siblings = gson.fromJson(root.getChildListJson(), listTy);
-                                    if (siblings != null) {
-                                        for (String sid : siblings) {
-                                            CommandEntity s = find(sid);
-                                            if (s == null) continue;
-                                            String t = s.getType();
-                                            if (CommandType.INGRESS_TLS_SELFSIGN.name().equals(t)
-                                                    || CommandType.INGRESS_TLS_CERTMANAGER.name().equals(t)
-                                                    || CommandType.INGRESS_TLS_EXTERNAL_SECRET.name().equals(t)) {
-                                                tlsConfigured = true; break;
-                                            }
-                                        }
-                                    }
-                                } catch (Exception ignore) {}
-                            }
-                            if (!tlsConfigured) {
-                                throw new IllegalStateException("OIDC_REGISTER_CLIENT pre-flight: redirectUri is https but the chart values have no ingress.tls and no INGRESS_TLS_SELFSIGN step is planned. " +
-                                        "Configure an ingress TLS mode (bringYourOwn / uploadLeaf / signedByAmbariCA / signedByCompanyCA) before enabling OIDC, otherwise the OAuth callback will fail with 502 or Keycloak will reject the redirect_uri.");
-                            }
+                        String problem = oidcIngressTlsProblem(childParams, rootParams, root);
+                        if (problem != null) {
+                            throw new IllegalStateException("OIDC_REGISTER_CLIENT pre-flight: " + problem);
                         }
                     }
 
@@ -20863,6 +20786,132 @@ public class CommandService {
      * @param rootStatus the root command's status
      * @param reason     why the deploy was refused, as shown to the operator
      */
+    /**
+     * Why the OIDC client of a plan cannot be registered: its redirect URI is https, the service's TLS is wired by
+     * the view (securityCoupling.tlsProvisioning), and neither the chart values nor a step of the plan gives the
+     * ingress a certificate, so the OAuth callback would fail. Checked once the deploy is planned, before anything runs
+     * (see {@link #refuseOidcWithoutIngressTls}), and again when the client is registered.
+     *
+     * @param oidcParams the parameters of the OIDC_REGISTER_CLIENT step
+     * @param rootParams the parameters of the plan
+     * @param root       the plan, whose steps may provision the ingress certificate
+     * @return the reason, or {@code null} when the client can be registered
+     */
+    String oidcIngressTlsProblem(Map<String, Object> oidcParams, Map<String, Object> rootParams, CommandEntity root) {
+        Map<String, Object> childParams = oidcParams;
+        String redirectUri = (String) childParams.get("oidcRedirectUri");
+        if (redirectUri == null || redirectUri.isBlank()) {
+            redirectUri = (String) childParams.get("redirectUri");
+        }
+        String redirectScheme = (redirectUri != null && redirectUri.contains("://"))
+                ? redirectUri.substring(0, redirectUri.indexOf("://")).toLowerCase()
+                : "";
+        // Service definitions declare how they expect TLS to be wired via
+        // `securityCoupling.tlsProvisioning`:
+        //   "k8s-view"       (default) — view participates in the unified ingress.tls[] pipeline
+        //   "chart-managed"  — chart owns its own TLS (GitLab uses this)
+        //   "external"       — operator manages TLS entirely outside, view stays hands-off
+        // The preflight only enforces the ingress.tls[] check for the "k8s-view"
+        // provisioning model; other models bypass it.
+        // Backward compat: legacy `requireTls: false` is still read for one chart cycle.
+        boolean skipIngressTlsCheck = false;
+        try {
+            String svcKey = (String) childParams.get("serviceKey");
+            if (svcKey != null && !svcKey.isBlank()) {
+                StackServiceDef preflightDef =
+                        new StackDefinitionService(this.ctx).getServiceDefinition(svcKey);
+                if (preflightDef != null && preflightDef.securityCoupling != null) {
+                    Object tlsProv = preflightDef.securityCoupling.get("tlsProvisioning");
+                    if (tlsProv != null) {
+                        String s = String.valueOf(tlsProv).trim().toLowerCase();
+                        if (!s.isEmpty() && !"k8s-view".equals(s)) {
+                            skipIngressTlsCheck = true;
+                        }
+                    } else {
+                        Object legacyRequireTls = preflightDef.securityCoupling.get("requireTls");
+                        if (legacyRequireTls != null
+                                && !"true".equalsIgnoreCase(String.valueOf(legacyRequireTls))
+                                && !Boolean.TRUE.equals(legacyRequireTls)) {
+                            skipIngressTlsCheck = true;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            LOG.debug("OIDC pre-flight: could not read securityCoupling, falling back to strict check: {}",
+                    ex.toString());
+        }
+        if ("https".equals(redirectScheme) && !skipIngressTlsCheck) {
+            // Look at the chart values that will be sent to Helm to confirm tls is present.
+            Map<String, Object> chartVals = this.commandUtils.loadValuesFromParams(rootParams);
+            Object ingress = (chartVals != null) ? chartVals.get("ingress") : null;
+            boolean tlsConfigured = false;
+            if (ingress instanceof Map<?, ?> ingMap) {
+                Object tls = ingMap.get("tls");
+                if (tls instanceof List<?> tlsList && !tlsList.isEmpty()) tlsConfigured = true;
+                Object tlsSecret = ingMap.get("tlsSecret");
+                if (tlsSecret instanceof String s && !s.isBlank()) tlsConfigured = true;
+            }
+            // Any TLS-provisioning sibling step counts as "TLS configured" — the Secret
+            // will exist (or be reconciled) before HELM_DEPLOY actually rolls out:
+            //   INGRESS_TLS_SELFSIGN          → view mints + writes Secret in-line
+            //   INGRESS_TLS_CERTMANAGER       → view writes Certificate CR, cert-manager fills the Secret
+            //   INGRESS_TLS_EXTERNAL_SECRET   → view writes ExternalSecret, ESO syncs from upstream store
+            // We check the rootCommand child list for any of those step types.
+            if (!tlsConfigured) {
+                try {
+                    Type listTy = new TypeToken<ArrayList<String>>(){}.getType();
+                    List<String> siblings = gson.fromJson(root.getChildListJson(), listTy);
+                    if (siblings != null) {
+                        for (String sid : siblings) {
+                            CommandEntity s = find(sid);
+                            if (s == null) continue;
+                            String t = s.getType();
+                            if (CommandType.INGRESS_TLS_SELFSIGN.name().equals(t)
+                                    || CommandType.INGRESS_TLS_CERTMANAGER.name().equals(t)
+                                    || CommandType.INGRESS_TLS_EXTERNAL_SECRET.name().equals(t)) {
+                                tlsConfigured = true; break;
+                            }
+                        }
+                    }
+                } catch (Exception ignore) {}
+            }
+            if (!tlsConfigured) {
+                return "redirectUri is https but the chart values have no ingress.tls and no INGRESS_TLS_SELFSIGN step is planned. " +
+                        "Configure an ingress TLS mode (bringYourOwn / uploadLeaf / signedByAmbariCA / signedByCompanyCA) before enabling OIDC, otherwise the OAuth callback will fail with 502 or Keycloak will reject the redirect_uri.";
+            }
+        }
+    
+        return null;
+    }
+
+    /** What a deploy refused for its OIDC client must change (see {@link #refuseOidcWithoutIngressTls}). */
+    static final String OIDC_NEEDS_INGRESS_TLS = "Single sign-on (OIDC) needs the release's Ingress served over HTTPS:"
+            + " turn the Ingress on and choose its TLS mode (Chart Settings), or deploy without OIDC.";
+
+    /**
+     * Refuses a planned deploy whose OIDC client could not be registered ({@link #oidcIngressTlsProblem}): the plan is
+     * closed before any step runs, rather than failing at the OIDC step once the keytab, the Ranger repository and the
+     * certificates are made.
+     *
+     * @throws IllegalArgumentException saying what to change in the deploy
+     */
+    private void refuseOidcWithoutIngressTls(CommandEntity root, CommandStatusEntity rootStatus) {
+        Type mapType = new TypeToken<LinkedHashMap<String, Object>>() {}.getType();
+        Map<String, Object> rootParams = gson.fromJson(resolveParamsJson(root), mapType);
+        for (CommandEntity step : plannedStepsOf(root)) {
+            if (!CommandType.OIDC_REGISTER_CLIENT.name().equals(step.getType())) continue;
+            Map<String, Object> oidcParams = gson.fromJson(resolveParamsJson(step), mapType);
+            String problem = oidcIngressTlsProblem(oidcParams == null ? Map.of() : oidcParams,
+                    rootParams == null ? Map.of() : rootParams, root);
+            if (problem != null) {
+                LOG.warn("Deploy {} refused before it started: {}", root.getId(), problem);
+                refuseStoredPlan(root, rootStatus, OIDC_NEEDS_INGRESS_TLS);
+                throw new IllegalArgumentException(OIDC_NEEDS_INGRESS_TLS);
+            }
+        }
+    }
+
     private void refuseStoredPlan(CommandEntity root, CommandStatusEntity rootStatus, String reason) {
         String now = Instant.now().toString();
         for (CommandEntity step : plannedStepsOf(root)) {
