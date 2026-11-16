@@ -96,6 +96,21 @@ public class DeployRequestValidatorTest {
     }
 
     @Test
+    public void aDeployWithoutAChartRepositoryIsRefused() {
+        // Planning reads the chart's values from the repository: without one it cannot even start.
+        String message = refusal(r -> {
+            r.setDeploymentMode("DIRECT_HELM");
+            r.setRepoId(null);
+        });
+        assertTrue(message, message.contains("Chart repository is missing"));
+
+        HelmDeployRequest namedInTheQuery = request();
+        namedInTheQuery.setDeploymentMode("DIRECT_HELM");
+        namedInTheQuery.setRepoId(null);
+        DeployRequestValidator.validate(namedInTheQuery, "charts", null);
+    }
+
+    @Test
     public void releaseNamesFollowHelmsRule() {
         assertEquals("Release name 'Trino_prod' is not valid: Helm accepts at most 53 lower-case letters, digits, '-'"
                 + " and '.', starting and ending with a letter or digit, such as trino-prod.",

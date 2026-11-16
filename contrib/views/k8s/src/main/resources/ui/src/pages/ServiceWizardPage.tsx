@@ -83,6 +83,8 @@ const ServiceWizardPage: React.FC = () => {
 
   // State
   const [installValues, setInstallValues] = useState<any>({}); // Step 1 & 2 data
+  // The chart comes from the repository chosen in step 1: without one the deploy cannot even read the chart's values.
+  const repoChosen = !!installValues?.repoId;
   // The Kubernetes clusters KDPS knows; with more than one, the wizard asks which one the service goes to.
   const [kubernetesClusters, setKubernetesClusters] = useState<KubernetesCluster[]>([]);
   useEffect(() => {
@@ -1452,7 +1454,8 @@ const ServiceWizardPage: React.FC = () => {
          // The Chart Settings step holds the service's own form: its required fields are checked on leaving it.
          if (current === CHART_SETTINGS_STEP && !formRulesPass()) return;
          setCurrent(current + 1);
-       }} disabled={(current === 3 && hasInvalidPasswords) || (current === 0 && !contextChosen)}>Next</Button>}
+       }} disabled={(current === 3 && hasInvalidPasswords) || (current === 0 && (!contextChosen || !repoChosen))}
+          title={current === 0 && !repoChosen ? 'Choose the repository the chart is deployed from' : undefined}>Next</Button>}
       {current === steps.length - 1 && previewsGit &&
        <Button onClick={runGitPreview} loading={gitPreviewLoading} disabled={submitting}>
          Preview Git repository{Object.keys(fileEdits).length ? ` (${Object.keys(fileEdits).length} edited)` : ''}

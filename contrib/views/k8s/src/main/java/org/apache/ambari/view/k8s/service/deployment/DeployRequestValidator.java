@@ -117,7 +117,9 @@ public final class DeployRequestValidator {
             checkChartVersionIfGiven("Chart version", request.getVersion());
             checkChartVersionIfGiven("Chart version", version);
         } else {
-            // The repository is only looked up by its id: an unknown one is refused there.
+            // The repository is only looked up by its id: an unknown one is refused there, a missing one here. (A
+            // GitOps deploy may reuse the repository recorded with the release, and refuses a missing one itself.)
+            checkRepositoryChosen(request.getRepoId(), repoId);
             checkChartReference("Chart", request.getChart());
             checkVersionLineIfGiven("Chart version", request.getVersion());
             checkVersionLineIfGiven("Chart version", version);
@@ -165,6 +167,19 @@ public final class DeployRequestValidator {
      *
      * @throws IllegalArgumentException when it is not a DNS-1123 label
      */
+    /**
+     * Checks that the deploy names the chart repository it is deployed from: the chart's values are read from it
+     * before anything is planned.
+     *
+     * @throws IllegalArgumentException when neither the request nor the query parameter names one
+     */
+    static void checkRepositoryChosen(String requestRepoId, String queryRepoId) {
+        if ((requestRepoId == null || requestRepoId.isBlank()) && (queryRepoId == null || queryRepoId.isBlank())) {
+            throw new IllegalArgumentException("Chart repository is missing: choose the Helm repository the chart is"
+                    + " deployed from (see the Helm Repositories page).");
+        }
+    }
+
     static void checkRepositoryIfGiven(String what, String repoId) {
         if (repoId != null && !repoId.isBlank()) {
             checkDnsLabel(what, repoId);

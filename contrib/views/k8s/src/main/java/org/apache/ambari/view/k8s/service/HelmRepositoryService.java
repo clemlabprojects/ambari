@@ -392,6 +392,7 @@ public class HelmRepositoryService {
      * @throws IllegalArgumentException if no repository with the given ID is found
      */
     public HelmRepoEntity mustGet(String id) {
+        if (id == null || id.isBlank()) throw new IllegalArgumentException("No chart repository was chosen");
         HelmRepoEntity entity = repositoryDao.findById(id);
         if (entity == null) throw new IllegalArgumentException("Unknown repository: " + id);
         return entity;
