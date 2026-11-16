@@ -399,6 +399,18 @@
         <task xsi:type="configure" id="odp_1_3_2_0_tez_view_ats_v15"/>
       </execute-stage>
 
+      <!-- TEZ / HIVE: a 1.3.x stack may still run on JDK 8; 1.3.2.0 runs on JDK 17, which refuses the JDK 8 GC options -->
+      <execute-stage service="TEZ" component="TEZ_CLIENT" title="Update Tez JVM Configuration for the JDK 17 Runtime">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeTezConfig">
+          <summary>Update Tez JVM configuration to base/extra properties</summary>
+        </task>
+      </execute-stage>
+      <execute-stage service="HIVE" component="HIVE_SERVER" title="Update Hive Tez JVM Configuration for the JDK 17 Runtime">
+        <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeHiveTezConfig">
+          <summary>Update Hive Tez JVM Configuration for JDK 11/17 Runtime</summary>
+        </task>
+      </execute-stage>
+
       <!-- YARN -->
       <execute-stage service="YARN" component="APP_TIMELINE_SERVER" title="Wire ATS v1.5 EntityGroupFSTimelineStore + Tez plugin">
         <task xsi:type="configure" id="odp_1_3_2_0_yarn_ats_v15_tez_plugin"/>

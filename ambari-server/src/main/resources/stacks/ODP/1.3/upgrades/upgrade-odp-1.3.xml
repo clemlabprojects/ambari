@@ -975,6 +975,9 @@
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_tez_harmonizegc_option" />
            <task xsi:type="configure" id="odp_1_3_2_0_tez_view_ats_v15" />
+           <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeTezConfig">
+             <summary>Update Tez JVM configuration to base/extra properties</summary>
+           </task>
         </pre-upgrade>
 
         <pre-downgrade/> <!--  no-op to prevent config changes on downgrade -->
@@ -1012,6 +1015,9 @@
       <component name="HIVE_SERVER">
         <pre-upgrade>
            <task xsi:type="configure" id="odp_1_2_4_0_kafka_3_support_hive_producer" />
+           <task xsi:type="server_action" class="org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeHiveTezConfig">
+             <summary>Update Hive Tez JVM Configuration for JDK 11/17 Runtime</summary>
+           </task>
         </pre-upgrade>
         <pre-downgrade/>
         <upgrade>

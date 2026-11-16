@@ -56,8 +56,11 @@ import org.apache.ambari.server.state.kerberos.KerberosServiceDescriptorFactory;
 import org.apache.ambari.server.state.oidc.OidcDescriptorFactory;
 import org.apache.ambari.server.state.stack.OsFamily;
 import org.apache.ambari.server.state.stack.UpgradePack;
+import org.apache.ambari.server.state.stack.upgrade.ClusterGrouping;
 import org.apache.ambari.server.state.stack.upgrade.Direction;
 import org.apache.ambari.server.state.stack.upgrade.Grouping;
+import org.apache.ambari.server.state.stack.upgrade.ServerSideActionTask;
+import org.apache.ambari.server.state.stack.upgrade.Task;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -147,6 +150,37 @@ public class AmbariMetaInfoOdpAmoroTest {
    * Services added in ODP 1.3.2.0 must be upgraded between two ODP 1.3 builds: every component is restarted (and
    * switched to the target version) by both packs, and the servers report their version.
    */
+  @Test
+  public void testOdp13PacksMoveTezJvmOptionsToJdk17() throws Exception {
+    // a 1.3.x source can still run on JDK 8; JDK 17 refuses -XX:+PrintGCTimeStamps in the Tez containers
+    String[] actions = {"org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeTezConfig",
+        "org.apache.ambari.server.serveraction.upgrades.JDK17RuntimeHiveTezConfig"};
+    Map<String, UpgradePack> packs = metaInfo.getUpgradePacks("ODP", "1.3");
+
+    Set<String> rolling = new HashSet<>();
+    for (String[] component : new String[][]{{"TEZ", "TEZ_CLIENT"}, {"HIVE", "HIVE_SERVER"}}) {
+      for (Task task : packs.get("upgrade-odp-1.3").getTasks().get(component[0]).get(component[1]).preTasks) {
+        if (task instanceof ServerSideActionTask) {
+          rolling.add(((ServerSideActionTask) task).getImplementationClass());
+        }
+      }
+    }
+    Set<String> express = new HashSet<>();
+    for (Grouping group : packs.get("nonrolling-upgrade-odp-1.3").getGroups(Direction.UPGRADE)) {
+      if (group instanceof ClusterGrouping && ((ClusterGrouping) group).executionStages != null) {
+        for (ClusterGrouping.ExecuteStage stage : ((ClusterGrouping) group).executionStages) {
+          if (stage.task instanceof ServerSideActionTask) {
+            express.add(((ServerSideActionTask) stage.task).getImplementationClass());
+          }
+        }
+      }
+    }
+    for (String action : actions) {
+      assertTrue("upgrade-odp-1.3 " + action, rolling.contains(action));
+      assertTrue("nonrolling-upgrade-odp-1.3 " + action, express.contains(action));
+    }
+  }
+
   @Test
   public void testOdp1320ServicesAreUpgradedByTheOdp13Packs() throws Exception {
     Map<String, String[]> services = new LinkedHashMap<>();
