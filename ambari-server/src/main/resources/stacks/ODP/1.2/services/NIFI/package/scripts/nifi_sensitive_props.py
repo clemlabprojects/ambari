@@ -104,7 +104,10 @@ def write_properties_copy(source, target, replacements, drop):
 
 class FlowSensitivePropertiesMigration(object):
 
-  def __init__(self, nifi_install_dir, nifi_config_dir, java_home, user, group):
+  def __init__(self, nifi_install_dir, nifi_config_dir, java_home, user, group, json_flow_only=False):
+    # NiFi 2 reads only the JSON flow, from nifi.flow.configuration.file; the nifi.properties on disk may still be
+    # the NiFi 1 one (flow.xml.gz there) right after the upgrade to NiFi 2
+    self.json_flow_only = json_flow_only
     self.nifi_install_dir = nifi_install_dir
     self.nifi_config_dir = nifi_config_dir
     self.java = os.path.join(java_home, 'bin', 'java')
@@ -129,6 +132,9 @@ class FlowSensitivePropertiesMigration(object):
     return {name: current[name] for name in (KEY, KEY_PROTECTED, ALGORITHM) if name in current}
 
   def _flows(self, current):
+    if self.json_flow_only:
+      json_flow = current.get('nifi.flow.configuration.json.file') or current.get('nifi.flow.configuration.file')
+      return [json_flow] if json_flow and json_flow.endswith('.json.gz') and non_empty_file(json_flow) else []
     return [current[p] for p in FLOW_FILE_PROPERTIES if current.get(p) and non_empty_file(current[p])]
 
   def run(self, new_key, new_algorithm):
@@ -152,11 +158,18 @@ class FlowSensitivePropertiesMigration(object):
     if not any(has_encrypted_values(flow) for flow in flows):
       Logger.info("The NiFi sensitive properties key or algorithm changed, the flow holds no encrypted value to re-encrypt")
       return
-    Logger.info("The NiFi sensitive properties key or algorithm changed, re-encrypting the existing flow")
     # same filesystem as the flow, so the converted files replace the originals with an atomic rename
     work = os.path.join(os.path.dirname(flows[0]), '.sensitive-props-migration')
     remove_tree(work)
     try:
+      # the nifi.properties on disk can be older than the flow: a stack upgrade seeds the new version's configuration
+      # when its packages are installed, and the key or algorithm changed afterwards (as the NiFi 2 upgrade check asks)
+      # already converted the flow under the previous version. Then there is nothing to re-encrypt.
+      if self._decrypts_with(work, current_file, flows, new_key, new_algorithm):
+        Logger.info("The NiFi flow already uses the configured sensitive properties key and algorithm "
+                    "(the nifi.properties on disk is older); nothing to re-encrypt")
+        return
+      Logger.info("The NiFi sensitive properties key or algorithm changed, re-encrypting the existing flow")
       staged = self._stage(work, 'stage', current_file, flows, {KEY: old_key, ALGORITHM: old_algorithm})
       if old_key != new_key:
         self._encryptor(work, 'stage', 'SetSensitivePropertiesKey', new_key)
@@ -175,6 +188,17 @@ class FlowSensitivePropertiesMigration(object):
     finally:
       remove_tree(work)
 
+  def _decrypts_with(self, work, properties_file, flows, key, algorithm):
+    """Whether NiFi decrypts every value of (copies of) the flows with this key and algorithm."""
+    try:
+      self._stage(work, 'probe', properties_file, flows, {KEY: key, ALGORITHM: algorithm})
+      self._encryptor(work, 'probe', 'SetSensitivePropertiesKey', key)
+      return True
+    except Fail:
+      return False
+    finally:
+      remove_tree(os.path.join(work, 'probe'))
+
   def _stage(self, work, name, properties_file, flows, values):
     """Copies the flow files and a plain nifi.properties pointing at them into work/name; returns {source: copy}."""
     directory = os.path.join(work, name)
@@ -186,12 +210,16 @@ class FlowSensitivePropertiesMigration(object):
       copy = os.path.join(directory, os.path.basename(flow))
       sudo.copy(flow, copy)
       copies[flow] = copy
-    for prop in FLOW_FILE_PROPERTIES:
+    if self.json_flow_only:
+      json_copy = next((c for f, c in copies.items() if f.endswith('.json.gz')), None)
+      replacements['nifi.flow.configuration.file'] = json_copy or os.path.join(directory, 'absent-flow.json.gz')
+    for prop in (() if self.json_flow_only else FLOW_FILE_PROPERTIES):
       if current.get(prop):
         source = current[prop]
         original = next((f for f in copies if f == source or os.path.basename(f) == os.path.basename(source)), None)
         replacements[prop] = copies[original] if original else os.path.join(directory, 'absent-' + os.path.basename(source))
-    write_properties_copy(properties_file, os.path.join(directory, 'nifi.properties'), replacements, drop=(KEY_PROTECTED,))
+    write_properties_copy(properties_file, os.path.join(directory, 'nifi.properties'), replacements,
+                          drop=(KEY_PROTECTED, 'nifi.flow.configuration.json.file') if self.json_flow_only else (KEY_PROTECTED,))
     # chown_recursive leaves the top directory itself to the caller
     sudo.chown(work, self.owner, self.group)
     sudo.chown_recursive(work, self.owner, self.group)

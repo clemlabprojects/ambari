@@ -205,7 +205,8 @@ class Master(Script):
     # Changing the sensitive properties key or algorithm re-encrypts the existing flow, which is only safe while NiFi is
     # stopped: at start the flow is converted first, otherwise the change waits for the next start
     migration = nifi_sensitive_props.FlowSensitivePropertiesMigration(params.nifi_install_dir, params.nifi_config_dir,
-                                                                       params.jdk64_home, params.nifi_user, params.nifi_group)
+                                                                       params.jdk64_home, params.nifi_user, params.nifi_group,
+                                                                       json_flow_only=params.nifi_flow_json_only)
     new_key = params.nifi_properties.get(nifi_sensitive_props.KEY)
     new_algorithm = params.nifi_properties.get(nifi_sensitive_props.ALGORITHM)
     if is_starting:

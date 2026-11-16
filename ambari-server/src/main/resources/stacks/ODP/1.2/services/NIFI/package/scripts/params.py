@@ -297,7 +297,8 @@ nifi_properties = config['configurations']['nifi-properties'].copy()
 if nifi_sensitive_props_key:
   nifi_properties['nifi.sensitive.props.key'] = nifi_sensitive_props_key
 # NiFi 2.x dropped nifi.flow.configuration.json.file and reads the JSON flow from nifi.flow.configuration.file
-if check_stack_feature('nifi_flow_json_only', version_for_stack_feature_checks) and 'nifi.flow.configuration.json.file' in nifi_properties:
+nifi_flow_json_only = check_stack_feature('nifi_flow_json_only', version_for_stack_feature_checks)
+if nifi_flow_json_only and 'nifi.flow.configuration.json.file' in nifi_properties:
   nifi_properties['nifi.flow.configuration.file'] = nifi_properties.pop('nifi.flow.configuration.json.file')
 # With TLS NiFi has no HTTP port: site-to-site and the cluster protocol must be secure too, or NiFi refuses to start
 # ("Remote input HTTP is enabled but nifi.web.http.port is not specified")
