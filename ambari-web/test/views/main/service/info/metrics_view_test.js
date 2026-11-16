@@ -188,6 +188,43 @@ describe('App.MainServiceInfoMetricsView', function() {
     });
   });
 
+  describe("#willDestroyElement()", function() {
+    var layouts;
+
+    beforeEach(function() {
+      layouts = {};
+      sinon.stub(window, '$').callsFake(function (selector) {
+        if (!layouts[selector]) {
+          layouts[selector] = {
+            initialized: selector === '#widget_layout',
+            tooltip: Em.K,
+            off: Em.K,
+            detach: function () { return this; },
+            remove: Em.K,
+            sortable: sinon.spy(function (method) {
+              if (method === 'instance') {
+                return this.initialized ? {} : undefined;
+              }
+              if (!this.initialized) {
+                throw new Error('cannot call methods on sortable prior to initialization; attempted to call method \'' + method + '\'');
+              }
+            })
+          };
+        }
+        return layouts[selector];
+      });
+    });
+    afterEach(function() {
+      window.$.restore();
+    });
+
+    it("destroys only the layouts that were made sortable", function() {
+      expect(function () { view.willDestroyElement(); }).to.not.throw();
+      expect(layouts['#widget_layout'].sortable.calledWith('destroy')).to.be.true;
+      expect(layouts['#ns_widget_layout'].sortable.calledWith('destroy')).to.be.false;
+    });
+  });
+
   describe("#makeSortable()", function() {
     var mock = {
       on: function(arg1, arg2, callback) {

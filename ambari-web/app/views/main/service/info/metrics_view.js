@@ -134,8 +134,14 @@ App.MainServiceInfoMetricsView = Em.View.extend(App.Persist, App.TimeRangeMixin,
     this._mutationObservers = [];
     $("[rel='add-widget-tooltip']").tooltip('destroy');
     $('.img-thumbnail').off();
-    $('#widget_layout').sortable('destroy');
-    $('#ns_widget_layout').sortable('destroy');
+    ['#widget_layout', '#ns_widget_layout'].forEach(function (selector) {
+      // jQuery UI throws "cannot call methods on sortable prior to initialization" for a layout
+      // that was never made sortable (absent NameNode federation layout, or rendered before makeSortable)
+      var layout = $(selector);
+      if (layout.sortable('instance')) {
+        layout.sortable('destroy');
+      }
+    });
     $('.widget.span2p4').detach().remove();
     this.get('serviceMetricGraphs').clear();
     this.set('service', null);
@@ -286,6 +292,32 @@ App.MainServiceInfoMetricsView = Em.View.extend(App.Persist, App.TimeRangeMixin,
   makeSortable: function (selector, isNSLayout) {
     var self = this;
     var controller = this.get('controller');
+    var initSortable = function (node) {
+      if ($(node).sortable('instance')) {
+        return;
+      }
+      $(node).sortable({
+        items: "> div",
+        cursor: "move",
+        tolerance: "pointer",
+        scroll: false,
+        update: function update() {
+          var layout = isNSLayout ? controller.get('selectedNSWidgetLayout') : controller.get('activeWidgetLayout');
+          var widgets = misc.sortByOrder($(selector + " .widget").map(function () {
+            return this.id;
+          }), layout.get('widgets').toArray());
+          controller.saveWidgetLayout(widgets, layout);
+        },
+        activate: function activate() {
+          self.set('isMoving', true);
+        },
+        deactivate: function deactivate() {
+          self.set('isMoving', false);
+        }
+      }).disableSelection();
+    };
+    // a layout already rendered is never reported by the observer below
+    Array.prototype.forEach.call(document.querySelectorAll(selector), initSortable);
     // Create a MutationObserver instance
     const observer = new MutationObserver((mutationsList) => {
       mutationsList.forEach((mutation) => {
@@ -294,25 +326,11 @@ App.MainServiceInfoMetricsView = Em.View.extend(App.Persist, App.TimeRangeMixin,
           mutation.addedNodes.forEach((node) => {
             // Check if the added node matches the selector
             if (node.matches && node.matches(selector)) {
-              $(node).sortable({
-                items: "> div",
-                cursor: "move",
-                tolerance: "pointer",
-                scroll: false,
-                update: function update() {
-                  var layout = isNSLayout ? controller.get('selectedNSWidgetLayout') : controller.get('activeWidgetLayout');
-                  var widgets = misc.sortByOrder($(selector + " .widget").map(function () {
-                    return this.id;
-                  }), layout.get('widgets').toArray());
-                  controller.saveWidgetLayout(widgets, layout);
-                },
-                activate: function activate() {
-                  self.set('isMoving', true);
-                },
-                deactivate: function deactivate() {
-                  self.set('isMoving', false);
-                }
-              }).disableSelection();
+              initSortable(node);
+            }
+            // the layout usually arrives inside a larger rendered block
+            if (node.querySelectorAll) {
+              Array.prototype.forEach.call(node.querySelectorAll(selector), initSortable);
             }
           });
         }
