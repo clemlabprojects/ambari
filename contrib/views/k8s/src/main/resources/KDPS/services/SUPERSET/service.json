@@ -1,6 +1,6 @@
 {
   "label": "Superset",
-  "chart": "apache/superset",
+  "chart": "superset",
   "secretName": "registry-credentials",
   "version": "0.12.54",
   "dependencies": {

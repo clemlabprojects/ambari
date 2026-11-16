@@ -80,7 +80,7 @@ export const getAvailableServices = (): Record<string, any> => {
     SUPERSET: {
       name: 'SUPERSET',
       label: 'Superset',
-      chart: 'apache/superset',
+      chart: 'superset',
       description: 'Apache Superset analytics',
       form: [
         { name: 'releaseName', label: 'Release', type: 'string', required: true },

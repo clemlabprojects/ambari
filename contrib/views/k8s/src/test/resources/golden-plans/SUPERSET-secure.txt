@@ -43,10 +43,10 @@ OIDC_CREATE_SECRET
     oidcEntryKey = superset
 CONFIG_MATERIALIZE
 HELM_DEPLOY_DRY_RUN
-    chart = apache/superset
+    chart = superset
     _dynamicOverrides = {global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.realm=odp, global.security.kerberos.realm=EXAMPLE.COM}
     _ov = {global.security.auth.mode=oidc, global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.secretRef.clientIdKey=client_id, global.security.auth.oidc.secretRef.clientSecretKey=client_secret, global.security.auth.oidc.secretRef.name=superset-oidc-client, global.security.kerberos.configMapName=superset-krb5-conf, global.security.kerberos.enabled=true, global.security.kerberos.injectionMode=PRE_PROVISIONED, global.security.kerberos.keytab.mountPath=/etc/security/keytabs, global.security.kerberos.keytab.secretDataKey=service.keytab, global.security.kerberos.keytab.secretName=superset-keytab, global.security.kerberos.kinitSidecar.principal=superset-dashboard-analytics@EXAMPLE.COM}
 HELM_DEPLOY
-    chart = apache/superset
+    chart = superset
     _dynamicOverrides = {global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.realm=odp, global.security.kerberos.realm=EXAMPLE.COM}
     _ov = {global.security.auth.mode=oidc, global.security.auth.oidc.issuerUrl=https://sso.example.com/realms/odp, global.security.auth.oidc.secretRef.clientIdKey=client_id, global.security.auth.oidc.secretRef.clientSecretKey=client_secret, global.security.auth.oidc.secretRef.name=superset-oidc-client, global.security.kerberos.configMapName=superset-krb5-conf, global.security.kerberos.enabled=true, global.security.kerberos.injectionMode=PRE_PROVISIONED, global.security.kerberos.keytab.mountPath=/etc/security/keytabs, global.security.kerberos.keytab.secretDataKey=service.keytab, global.security.kerberos.keytab.secretName=superset-keytab, global.security.kerberos.kinitSidecar.principal=superset-dashboard-analytics@EXAMPLE.COM}
