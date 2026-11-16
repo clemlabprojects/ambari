@@ -29,10 +29,17 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.ambari.server.orm.dao.ArtifactDAO;
 import org.apache.ambari.server.orm.entities.ArtifactEntity;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.server.state.Config;
+import org.apache.ambari.server.state.PropertyInfo;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptor;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
 import org.easymock.Capture;
@@ -102,5 +109,65 @@ public class UpgradeCatalog282Test {
   private static String principal(KerberosDescriptor descriptor) {
     return descriptor.getService("OZONE").getComponent("OZONE_DATANODE")
         .getIdentity("ozone_datanode_ozone").getPrincipalDescriptor().getValue();
+  }
+
+  /** Records the properties removed instead of writing a new configuration. */
+  private static class RecordingCatalog extends UpgradeCatalog282 {
+    final Set<String> removed = new HashSet<>();
+    RecordingCatalog() { super(createNiceMock(Injector.class)); }
+    @Override
+    protected void removeConfigurationPropertiesFromCluster(Cluster cluster, String configType, Set<String> properties) {
+      properties.forEach(p -> removed.add(configType + "/" + p));
+    }
+  }
+
+  private static Cluster clusterWithNifiProperties(Map<String, String> properties) {
+    Config config = createNiceMock(Config.class);
+    expect(config.getProperties()).andReturn(properties).anyTimes();
+    Cluster cluster = createNiceMock(Cluster.class);
+    expect(cluster.getDesiredConfigByType("nifi-properties")).andReturn(config).anyTimes();
+    expect(cluster.getClusterName()).andReturn("c1").anyTimes();
+    replay(config, cluster);
+    return cluster;
+  }
+
+  private static PropertyInfo property(String file, String name) {
+    PropertyInfo p = new PropertyInfo();
+    p.setFilename(file);
+    p.setName(name);
+    return p;
+  }
+
+  @Test
+  public void testNifiPropertiesKeyIsRemovedWhenTheStackNoLongerDefinesIt() throws Exception {
+    RecordingCatalog catalog = new RecordingCatalog();
+    Map<String, String> props = new HashMap<>();
+    props.put("nifi.sensitive.props.key", "NifiKey1");
+    props.put("nifi.sensitive.props.algorithm", "NIFI_PBKDF2_AES_GCM_256");
+    Set<PropertyInfo> stack = new HashSet<>();
+    stack.add(property("nifi-ambari-config.xml", "nifi.sensitive.props.key"));
+    stack.add(property("nifi-properties.xml", "nifi.sensitive.props.algorithm"));
+    assertTrue(catalog.removeUnusedNifiSensitiveKey(clusterWithNifiProperties(props), stack));
+    assertEquals(Collections.singleton("nifi-properties/nifi.sensitive.props.key"), catalog.removed);
+  }
+
+  @Test
+  public void testNifiPropertiesKeyIsKeptWhenTheStackStillDefinesIt() throws Exception {
+    RecordingCatalog catalog = new RecordingCatalog();
+    Set<PropertyInfo> stack = Collections.singleton(property("nifi-properties.xml", "nifi.sensitive.props.key"));
+    assertFalse(catalog.removeUnusedNifiSensitiveKey(
+        clusterWithNifiProperties(Collections.singletonMap("nifi.sensitive.props.key", "k")), stack));
+    assertTrue(catalog.removed.isEmpty());
+  }
+
+  @Test
+  public void testNothingToRemoveWithoutAStoredKey() throws Exception {
+    RecordingCatalog catalog = new RecordingCatalog();
+    assertFalse(catalog.removeUnusedNifiSensitiveKey(
+        clusterWithNifiProperties(Collections.singletonMap("nifi.sensitive.props.algorithm", "x")), Collections.emptySet()));
+    Cluster withoutNifi = createNiceMock(Cluster.class);
+    replay(withoutNifi);
+    assertFalse(catalog.removeUnusedNifiSensitiveKey(withoutNifi, Collections.emptySet()));
+    assertTrue(catalog.removed.isEmpty());
   }
 }

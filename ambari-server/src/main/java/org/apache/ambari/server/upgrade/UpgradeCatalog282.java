@@ -20,13 +20,22 @@ package org.apache.ambari.server.upgrade;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.ambari.server.AmbariException;
+import org.apache.ambari.server.api.services.AmbariMetaInfo;
+import org.apache.ambari.server.controller.AmbariManagementController;
 import org.apache.ambari.server.orm.DBAccessor;
 import org.apache.ambari.server.orm.dao.ArtifactDAO;
 import org.apache.ambari.server.orm.entities.ArtifactEntity;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.server.state.Clusters;
+import org.apache.ambari.server.state.Config;
+import org.apache.ambari.server.state.PropertyInfo;
+import org.apache.ambari.server.state.StackId;
 import org.apache.ambari.server.state.kerberos.KerberosComponentDescriptor;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptor;
 import org.apache.ambari.server.state.kerberos.KerberosDescriptorFactory;
@@ -70,6 +79,10 @@ public class UpgradeCatalog282 extends AbstractUpgradeCatalog {
   static final String OZONE_DATANODE_PREVIOUS_PRINCIPAL = "dn/_HOST@${realm}";
   static final String OZONE_DATANODE_PRINCIPAL = "hdds/_HOST@${realm}";
 
+  static final String NIFI_SERVICE = "NIFI";
+  static final String NIFI_PROPERTIES = "nifi-properties";
+  static final String NIFI_SENSITIVE_PROPS_KEY = "nifi.sensitive.props.key";
+
   @Inject
   public UpgradeCatalog282(Injector injector) {
     super(injector);
@@ -98,6 +111,45 @@ public class UpgradeCatalog282 extends AbstractUpgradeCatalog {
   @Override
   protected void executeDMLUpdates() throws AmbariException, SQLException {
     updateKerberosDescriptorArtifacts();
+    removeUnusedNifiSensitiveKeys();
+  }
+
+  /**
+   * NiFi reads its sensitive properties key from nifi-ambari-config only. The ODP 1.2+ stacks no longer define the
+   * nifi-properties copy, so the web UI showed a stored value as a custom property, in clear text.
+   */
+  protected void removeUnusedNifiSensitiveKeys() throws AmbariException {
+    Clusters clusters = injector.getInstance(AmbariManagementController.class).getClusters();
+    if (clusters == null) {
+      return;
+    }
+    AmbariMetaInfo metaInfo = injector.getInstance(AmbariMetaInfo.class);
+    for (Cluster cluster : clusters.getClusters().values()) {
+      StackId stack = cluster.getCurrentStackVersion();
+      if (stack == null || cluster.getServices().get(NIFI_SERVICE) == null) {
+        continue;
+      }
+      removeUnusedNifiSensitiveKey(cluster, metaInfo.getServiceProperties(stack.getStackName(), stack.getStackVersion(), NIFI_SERVICE));
+    }
+  }
+
+  /**
+   * @return whether the key was removed: only when the cluster stores it and the stack no longer defines it
+   */
+  boolean removeUnusedNifiSensitiveKey(Cluster cluster, Set<PropertyInfo> stackNifiProperties) throws AmbariException {
+    Config config = cluster.getDesiredConfigByType(NIFI_PROPERTIES);
+    if (config == null || config.getProperties() == null || !config.getProperties().containsKey(NIFI_SENSITIVE_PROPS_KEY)) {
+      return false;
+    }
+    for (PropertyInfo property : stackNifiProperties) {
+      if (NIFI_SENSITIVE_PROPS_KEY.equals(property.getName()) && (NIFI_PROPERTIES + ".xml").equals(property.getFilename())) {
+        return false;
+      }
+    }
+    LOG.info("Removing the unused {}/{} from cluster {}: NiFi reads the key from nifi-ambari-config",
+        NIFI_PROPERTIES, NIFI_SENSITIVE_PROPS_KEY, cluster.getClusterName());
+    removeConfigurationPropertiesFromCluster(cluster, NIFI_PROPERTIES, Collections.singleton(NIFI_SENSITIVE_PROPS_KEY));
+    return true;
   }
 
   /**
