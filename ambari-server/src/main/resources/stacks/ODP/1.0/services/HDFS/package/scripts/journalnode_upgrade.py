@@ -24,7 +24,9 @@ from resource_management.core.resources.system import Execute
 from resource_management.libraries.functions.default import default
 from resource_management.core.exceptions import Fail
 import utils
-from resource_management.libraries.functions.jmx import get_value_from_jmx
+from resource_management.libraries.functions.get_user_call_output import get_user_call_output
+from ambari_commons.constants import UPGRADE_TYPE_NON_ROLLING
+import ambari_simplejson as json
 import namenode_ha_state
 from namenode_ha_state import NAMENODE_STATE, NamenodeHAState
 from utils import get_dfsadmin_base_command
@@ -75,14 +77,16 @@ def post_upgrade_check():
     raise Fail("JournalTransactionInfo does not have key LastAppliedOrWrittenTxId from JMX info")
 
 
-def wait_for_this_jn_to_sync(env):
+def wait_for_this_jn_to_sync(env, upgrade_type=None):
   """
   Block until the JournalNode on THIS host has caught up with the edit-log
   writer (CurrentLagTxns == 0), so that a rolling restart does not move on to
   the next JournalNode while this one is still behind.
 
-  Only runs when NameNode HA is enabled and never during the initial cluster
-  start (there is nothing to sync against yet). Bounded by a configurable
+  Only runs when NameNode HA is enabled, never during the initial cluster start
+  or an express upgrade, and stops as soon as the JournalNode shows that no
+  NameNode writes to it (the NameNodes start after the JournalNodes in a full
+  start): there is nothing to sync against then. Bounded by a configurable
   timeout; if the JournalNode is still lagging when the timeout elapses the
   restart is failed so the rolling restart halts instead of cascading.
   """
@@ -97,6 +101,11 @@ def wait_for_this_jn_to_sync(env):
   # on a fresh cluster the JMX lag bean is not meaningful yet
   if params.command_phase == "INITIAL_START":
     Logger.info("INITIAL_START phase; skipping JournalNode sync wait")
+    return
+
+  # an express upgrade stops every NameNode before restarting the JournalNodes
+  if upgrade_type == UPGRADE_TYPE_NON_ROLLING:
+    Logger.info("Express upgrade: the NameNodes are stopped; skipping JournalNode sync wait")
     return
 
   if params.journalnode_port is None:
@@ -123,9 +132,12 @@ def wait_for_this_jn_to_sync(env):
   Logger.info("Waiting for JournalNode %s to reach CurrentLagTxns=0 (timeout %ds)" % (params.hostname, timeout_secs))
   last_lag = None
   for i in range(iterations):
-    lag = get_value_from_jmx(qry, 'CurrentLagTxns', params.security_enabled,
-                             params.hdfs_user, params.https_only, last_retry=(i == iterations - 1))
-    if lag is None:
+    state, lag = read_journal_lag(qry, params.security_enabled, params.hdfs_user, params.https_only)
+    if state == JN_NO_WRITER:
+      Logger.info("No NameNode writes to JournalNode %s yet (no Journal-%s bean); skipping JournalNode sync wait"
+                  % (params.hostname, name_service))
+      return
+    if state == JN_DOWN:
       Logger.info("Try %d/%d: JournalNode lag not readable yet" % (i + 1, iterations))
     else:
       last_lag = int(lag)
@@ -143,6 +155,33 @@ def wait_for_this_jn_to_sync(env):
 
   raise Fail("JournalNode %s is still lagging (CurrentLagTxns=%d) after %ds; halting rolling restart" % (
     params.hostname, last_lag, timeout_secs))
+
+
+JN_DOWN = "down"
+JN_NO_WRITER = "no-writer"
+JN_LAG = "lag"
+
+
+def read_journal_lag(qry, security_enabled, run_user, https):
+  """
+  :return: (JN_DOWN, None) while the JournalNode does not answer JMX (still starting),
+           (JN_NO_WRITER, None) when it answers without the journal bean: no NameNode has written to it yet,
+           (JN_LAG, CurrentLagTxns) otherwise
+  """
+  cmd = ['curl', '--negotiate', '-u', ':', '-s'] if security_enabled else ['curl', '-s']
+  if https:
+    cmd.append('-k')
+  cmd.append(qry)
+  try:
+    _, data, _ = get_user_call_output(cmd, user=run_user, quiet=True)
+    beans = json.loads(data).get('beans') if data else None
+  except Exception:
+    return JN_DOWN, None
+  if beans is None:
+    return JN_DOWN, None
+  if not beans or beans[0].get('CurrentLagTxns') is None:
+    return JN_NO_WRITER, None
+  return JN_LAG, int(beans[0]['CurrentLagTxns'])
 
 
 def hdfs_roll_edits():
