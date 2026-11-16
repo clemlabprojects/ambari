@@ -62,6 +62,16 @@ def setup_ranger_nifi_registry(upgrade_type=None):
                                 )
             params.HdfsResource(None, action="execute")
 
+        # the Ranger audit writer resolves the HDFS (HA) nameservice from core-site.xml / hdfs-site.xml on NiFi Registry's classpath
+        if params.xa_audit_hdfs_is_enabled and params.has_namenode:
+            from resource_management.libraries.functions.setup_ranger_plugin_xml import setup_configuration_file_for_required_plugins
+            for hadoop_file in ('core-site', 'hdfs-site'):
+                setup_configuration_file_for_required_plugins(component_user=params.nifi_registry_user, component_group=params.nifi_registry_group,
+                                                              create_core_site_path=params.nifi_registry_config_dir,
+                                                              configurations=params.config['configurations'][hadoop_file],
+                                                              configuration_attributes=params.config['configurationAttributes'].get(hadoop_file, {}),
+                                                              file_name=hadoop_file + '.xml')
+
         api_version = None
         if params.stack_supports_ranger_kerberos:
             api_version = 'v2'

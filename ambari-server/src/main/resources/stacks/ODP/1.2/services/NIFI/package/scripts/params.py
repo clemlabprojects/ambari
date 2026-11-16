@@ -372,7 +372,8 @@ for host in config['clusterHostInfo'][zk_hosts_property]:
 ranger_policy_config = {}
 retryAble = default("/commandParams/command_retry_enabled", False)
 version = default("/commandParams/version", None)
-namenode_hosts = default("/clusterHostInfo/namenode_host", None)
+# Ambari 2.7+ sends namenode_hosts; namenode_host is the pre-2.7 key
+namenode_hosts = default("/clusterHostInfo/namenode_hosts", None) or default("/clusterHostInfo/namenode_host", None)
 
 if type(namenode_hosts) is list:
   namenode_host = namenode_hosts[0]
@@ -587,7 +588,7 @@ if has_ranger_admin:
   if xml_configurations_supported and stack_supports_ranger_audit_db:
     xa_audit_db_is_enabled = config['configurations']['ranger-nifi-audit']['xasecure.audit.destination.solr']
 
-  xa_audit_hdfs_is_enabled =  default('/configurations/ranger-nifi-audit/xasecure.audit.destination.hdfs', False)
+  xa_audit_hdfs_is_enabled =  str(default('/configurations/ranger-nifi-audit/xasecure.audit.destination.hdfs', False)).lower() == 'true'
 
 
   #For SQLA explicitly disable audit to DB for Ranger
@@ -627,6 +628,7 @@ has_hdfs_client_on_node = 'HDFS_CLIENT' in local_component_list
 import functools
 #create partial functions with common arguments for every HdfsResource call
 #to create/delete hdfs directory/file/copyfromlocal we need to call params.HdfsResource in code
+dfs_type = default("/clusterLevelParams/dfs_type", "")
 HdfsResource = functools.partial(
   HdfsResource,
   user=hdfs_user,
@@ -639,5 +641,6 @@ HdfsResource = functools.partial(
   principal_name = hdfs_principal_name,
   hdfs_site = hdfs_site,
   default_fs = default_fs,
-  immutable_paths = get_not_managed_resources()
+  immutable_paths = get_not_managed_resources(),
+  dfs_type = dfs_type
 )
