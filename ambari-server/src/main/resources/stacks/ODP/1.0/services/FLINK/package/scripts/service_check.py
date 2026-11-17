@@ -37,7 +37,9 @@ class FlinkServiceCheck(Script):
       Execute(flink_kinit_cmd, user=params.smoke_user)
     
     # Client check application
-    Execute(params.flink_service_check_cmd, user=params.smoke_user)
+    # the flink launcher picks the first JDK it finds on the host when JAVA_HOME is not set
+    Execute(params.flink_service_check_cmd, user=params.smoke_user,
+            environment={'JAVA_HOME': params.java_home})
 
     if params.has_historyserver:
       Logger.info("Executing Flink History Server Check")
