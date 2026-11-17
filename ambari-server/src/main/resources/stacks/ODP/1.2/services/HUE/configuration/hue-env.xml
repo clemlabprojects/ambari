@@ -66,6 +66,10 @@
       <overridable>true</overridable>
       <user-groups>
         <property>
+          <type>cluster-env</type>
+          <name>user_group</name>
+        </property>
+        <property>
           <type>hue-env</type>
           <name>hue_group</name>
         </property>
