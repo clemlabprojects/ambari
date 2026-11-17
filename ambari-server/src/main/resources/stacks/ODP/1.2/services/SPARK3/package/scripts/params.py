@@ -104,6 +104,8 @@ if stack_version_formatted and check_stack_feature(StackFeature.ROLLING_UPGRADE,
 spark_daemon_memory = config['configurations']['spark3-env']['spark_daemon_memory']
 spark_thrift_server_conf_file = spark_conf + "/spark-thrift-sparkconf.conf"
 java_home = config['ambariLevelParams']['java_home']
+# YARN starts the containers on the stack primary JDK unless spark-defaults sets their JAVA_HOME
+primary_java_home = java_home
 # Spark daemons, clients and rendered configuration must use the same runtime.
 if check_stack_feature(StackFeature.SECONDARY_JAVA_HOME_SUPPORT, version_for_stack_feature_checks):
   java_home = (default('/ambariLevelParams/secondary_java_home', None)

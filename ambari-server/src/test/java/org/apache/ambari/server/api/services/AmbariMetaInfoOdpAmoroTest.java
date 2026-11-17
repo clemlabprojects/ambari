@@ -182,6 +182,26 @@ public class AmbariMetaInfoOdpAmoroTest {
   }
 
   @Test
+  public void testOdpConfigUpgradeConditionsNameTheirConfigType() throws Exception {
+    // ConfigureTask drops a conditional change without if-type, so the migration silently does nothing
+    for (String version : new String[]{"1.2", "1.3"}) {
+      File file = new File("src/main/resources/stacks/ODP/" + version + "/upgrades/config-upgrade.xml");
+      org.w3c.dom.NodeList elements = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder()
+          .parse(file).getElementsByTagName("*");
+      int conditions = 0;
+      for (int n = 0; n < elements.getLength(); n++) {
+        org.w3c.dom.Element element = (org.w3c.dom.Element) elements.item(n);
+        if (element.hasAttribute("if-key")) {
+          conditions++;
+          assertTrue(file + ": " + element.getTagName() + " " + element.getAttribute("key") + " has if-key without if-type",
+              element.hasAttribute("if-type"));
+        }
+      }
+      assertTrue(file + " has conditional changes", conditions > 0);
+    }
+  }
+
+  @Test
   public void testOdp1320ServicesAreUpgradedByTheOdp13Packs() throws Exception {
     Map<String, String[]> services = new LinkedHashMap<>();
     services.put("POLARIS", new String[]{"POLARIS_SERVER", "POLARIS_MCP_SERVER", "POLARIS_CONSOLE", "POLARIS_CLIENT"});

@@ -43,6 +43,22 @@ from resource_management.libraries.resources.xml_config import XmlConfig
 from resource_management.libraries.functions.setup_atlas_hook import setup_atlas_hook
 from ambari_commons.constants import SERVICE
 
+YARN_JAVA_HOME_KEYS = ('spark.yarn.appMasterEnv.JAVA_HOME', 'spark.executorEnv.JAVA_HOME')
+JAVA_HOME_PLACEHOLDERS = ('', '{{java_home}}', '{{spark_java_home}}')
+
+def pin_yarn_java_home(spark_conf_properties):
+  """
+  Spark runs on the secondary JDK when the stack supports it (ODP 1.3.2.0: JDK 21, Spark is built against Hive 4.2).
+  YARN starts the application master and the executors on the NodeManager JDK, the primary one, unless the Spark
+  configuration sets their JAVA_HOME: set it when it is missing or left to its default, keep a path the administrator set.
+  """
+  import params
+  if params.spark_java_home == params.primary_java_home:
+    return
+  for key in YARN_JAVA_HOME_KEYS:
+    if str(spark_conf_properties.get(key, '')).strip() in JAVA_HOME_PLACEHOLDERS:
+      spark_conf_properties[key] = params.spark_java_home
+
 def setup_spark(env, type, upgrade_type = None, action = None):
   import params
 
@@ -100,6 +116,7 @@ def setup_spark(env, type, upgrade_type = None, action = None):
   else:
     spark3_defaults['spark.yarn.am.extraJavaOptions'] = format("-Dodp.version={params.version}")
 
+  pin_yarn_java_home(spark3_defaults)
 
   PropertiesFile(format("{spark_conf}/spark-defaults.conf"),
     properties = spark3_defaults,
@@ -167,6 +184,8 @@ def setup_spark(env, type, upgrade_type = None, action = None):
 
     if params.security_enabled and 'spark.yarn.principal' in spark3_thrift_sparkconf:
       spark3_thrift_sparkconf['spark.yarn.principal'] = spark3_thrift_sparkconf['spark.yarn.principal'].replace('_HOST', socket.getfqdn().lower())
+
+    pin_yarn_java_home(spark3_thrift_sparkconf)
 
     PropertiesFile(params.spark_thrift_server_conf_file,
       properties = spark3_thrift_sparkconf,
