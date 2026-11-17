@@ -398,6 +398,11 @@
         "max_version": "2.5.9.9"
       },
       {
+        "name": "atlas_java_reflection_compat",
+        "description": "Atlas rewrites a JanusGraph static final field by reflection, which JDK 18+ refuses; on JDK 17 to 21 start it with -Djdk.reflect.useDirectMethodHandle=false",
+        "min_version": "1.3.2.0"
+      },
+      {
         "name": "atlas_hdfs_site_on_namenode_ha",
         "description": "Need to create hdfs-site under atlas-conf dir when Namenode-HA is enabled.",
         "min_version": "1.0.0.0"

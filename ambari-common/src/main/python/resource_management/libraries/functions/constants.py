@@ -126,6 +126,7 @@ class StackFeature:
   SECURE_RANGER_SSL_PASSWORD = "secure_ranger_ssl_password"
   RANGER_KMS_SSL = "ranger_kms_ssl"
   RANGER_KMS_LOGBACK = "ranger_kms_logback"
+  ATLAS_JAVA_REFLECTION_COMPAT = "atlas_java_reflection_compat"
   KAFKA_ACL_MIGRATION_SUPPORT = "kafka_acl_migration_support"
   ATLAS_CORE_SITE_SUPPORT="atlas_core_site_support"
   KAFKA_EXTENDED_SASL_SUPPORT = "kafka_extended_sasl_support"

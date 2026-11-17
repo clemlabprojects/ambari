@@ -18,10 +18,12 @@ limitations under the License.
 
 """
 import os
+import re
 import sys
 
 from ambari_commons import OSCheck
 from resource_management import get_bare_principal
+from resource_management.core import shell
 from resource_management.core.logger import Logger
 from resource_management.libraries.functions.version import format_stack_version
 from resource_management.libraries.script.script import Script
@@ -189,6 +191,29 @@ for k,v in additional_ha_props.items():
 metadata_env_content = config['configurations']['atlas-env']['content']
 
 metadata_opts = config['configurations']['atlas-env']['metadata_opts']
+
+# Atlas adds its HBase 2 store to JanusGraph by rewriting a static final field through reflection.
+# JDK 18+ refuses it ("static final field has no write access") and Atlas never becomes ACTIVE.
+# JDK 18 to 21 can restore the previous reflection implementation with a system property, which
+# JDK 17 ignores: add it on the start command when the Atlas Java home is JDK 17 to 21.
+atlas_java_reflection_flag = "-Djdk.reflect.useDirectMethodHandle=false"
+
+def atlas_java_major(java_home):
+  try:
+    code, output = shell.call((os.path.join(java_home, "bin", "java"), "-version"), timeout=20, quiet=True)
+    match = re.search(r'(?:openjdk|java) version "(\d+)(?:\.(\d+))?', output)
+    if code or not match:
+      return None
+    return int(match.group(2) if match.group(1) == "1" else match.group(1))
+  except Exception as error:
+    Logger.warning("Cannot determine the Java version of {0}: {1}".format(java_home, error))
+    return None
+
+if check_stack_feature(StackFeature.ATLAS_JAVA_REFLECTION_COMPAT, version_for_stack_feature_checks) \
+    and atlas_java_reflection_flag not in (metadata_opts or ""):
+  atlas_jdk_major = atlas_java_major(java64_home)
+  if atlas_jdk_major is not None and 17 <= atlas_jdk_major <= 21:
+    metadata_opts = ((metadata_opts or "") + " " + atlas_java_reflection_flag).strip()
 metadata_classpath = config['configurations']['atlas-env']['metadata_classpath']
 data_dir = format("{stack_root}/current/atlas-server/data")
 expanded_war_dir = os.environ['METADATA_EXPANDED_WEBAPP_DIR'] if 'METADATA_EXPANDED_WEBAPP_DIR' in os.environ else format("{stack_root}/current/atlas-server/server/webapp")
