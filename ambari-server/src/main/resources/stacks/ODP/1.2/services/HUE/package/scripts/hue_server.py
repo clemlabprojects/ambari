@@ -145,11 +145,16 @@ class HueGatewayDefault(HueGateway):
     Execute(command, user=params.hue_user)
 
 
-    ## Run HUE DB migration script
+    ## Run HUE DB migration script as the Hue user: the database password script
+    ## reads Hue's secret files, which a non-root agent user cannot read
     try:
-      Execute((format('{params.hue_home_dir}/build/env/bin/hue'), 'migrate'))
-    except:
+      Execute((format('{params.hue_home_dir}/build/env/bin/hue'), 'migrate'),
+              user=params.hue_user,
+              environment={'HUE_CONF_DIR': params.hue_conf_dir})
+    except Exception as err:
+      Logger.error(format('Hue database migration failed: {err}'))
       show_logs(params.hue_logs_dir, params.hue_user)
+      raise
     first_time = False
     ## Create the default admin password ## need to change password before creating user
     create_cmd = format('{params.hue_home_dir}/build/env/bin/hue createsuperuser --username {params.hue_admin_username}  --email {params.hue_admin_username}@hadoop.com --noinput')
