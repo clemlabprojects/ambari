@@ -143,7 +143,7 @@
           "required-properties": {
             "jdbc.driver.class": "hue-ini-conf/hue.jpa.jdbc.driver",
             "jdbc.driver.url": "hue-ini-conf/hue.jpa.jdbc.url",
-            "db.connection.source.host": "hue-ini-conf/hue_server_hosts" ,
+            "db.connection.source.host": "hue-site/hue_server_hosts" ,
             "db.type": "hue-env/hue_database",
             "db.connection.destination.host": "hue-ini-conf/hue_db_host",
             "db.connection.user": "hue-ini-conf/hue_db_username",
@@ -183,7 +183,7 @@
           "required-properties": {
             "jdbc.driver.class": "hue-ini-conf/hue.jpa.jdbc.driver",
             "jdbc.driver.url": "hue-env/hue_privelege_user_jdbc_url",
-            "db.connection.source.host": "hue-ini-conf/hue_server_hosts",
+            "db.connection.source.host": "hue-site/hue_server_hosts",
             "db.type": "hue-env/hue_database",
             "db.connection.destination.host": "hue-ini-conf/hue_db_host",
             "db.connection.user": "hue-env/db_root_user",
