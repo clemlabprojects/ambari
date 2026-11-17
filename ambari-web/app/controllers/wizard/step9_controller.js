@@ -478,6 +478,11 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    */
   getAddedServicesList: function () {
     var servicesList = this.get('content.services').filterProperty('isSelected').filterProperty('isInstalled', false).mapProperty('serviceName');
+    // installed services the Add Service install stopped because the added services changed their configuration
+    var servicesToCycle = this.get('wizardController') && this.get('wizardController').getDBProperty('servicesToCycle');
+    if (servicesToCycle) {
+      return servicesList.concat(servicesToCycle).uniq();
+    }
     if (servicesList.contains('OOZIE')) {
       servicesList = servicesList.concat(['HDFS', 'YARN', 'MAPREDUCE2']);
     }
@@ -498,8 +503,11 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method shouldRestartHiveMetastoreBeforeStartingImpala
    */
   shouldRestartHiveMetastoreBeforeStartingImpala: function () {
+    var addedServices = this.getAddedServicesList();
+    // when Hive is started with the added services, the role command order already starts the Hive Metastore
+    // after HDFS and YARN and before the Impala catalog
     return this.get('content.controllerName') === 'addServiceController' &&
-      this.getAddedServicesList().contains('IMPALA') &&
+      addedServices.contains('IMPALA') && !addedServices.contains('HIVE') &&
       this.getStartedHostComponents('HIVE_METASTORE').length > 0;
   },
 

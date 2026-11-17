@@ -52,6 +52,34 @@ describe('App.AddServiceController', function() {
     });
   });
 
+  describe('#generateDataForInstallServices with services to cycle', function() {
+    it('stops the installed services to cycle with the added ones', function () {
+      addServiceController.set('content.servicesToCycle', ['HDFS', 'YARN', 'HIVE']);
+      expect(addServiceController.generateDataForInstallServices(['IMPALA', 'KUDU']).urlParams)
+        .to.equal('ServiceInfo/service_name.in(IMPALA,KUDU,HDFS,YARN,HIVE)');
+    });
+    it('stops nothing more when no installed service has to be cycled', function () {
+      addServiceController.set('content.servicesToCycle', []);
+      expect(addServiceController.generateDataForInstallServices(['OOZIE']).urlParams)
+        .to.equal('ServiceInfo/service_name.in(OOZIE)');
+    });
+  });
+
+  describe('#getServicesToCycle', function() {
+    var installed = ['HDFS', 'YARN', 'MAPREDUCE2', 'HIVE', 'ZOOKEEPER'];
+    [
+      {selected: ['KNOX'], stale: ['HDFS', 'YARN'], res: ['HDFS', 'YARN'], m: 'installed services with stale started components'},
+      {selected: ['OOZIE'], stale: [], res: ['HDFS', 'YARN', 'MAPREDUCE2'], m: 'Oozie still cycles HDFS, YARN and MapReduce2'},
+      {selected: ['IMPALA', 'KUDU'], stale: ['HDFS'], res: ['HDFS', 'HIVE'], m: 'Impala cycles Hive so the Metastore starts before the Impala catalog'},
+      {selected: ['IMPALA', 'HIVE'], stale: [], res: [], m: 'a service being added is not cycled'},
+      {selected: ['OOZIE'], stale: [], installed: ['ZOOKEEPER'], res: [], m: 'only installed services are cycled'}
+    ].forEach(function (t) {
+      it(t.m, function () {
+        expect(addServiceController.getServicesToCycle(t.selected, t.stale, t.installed || installed)).to.eql(t.res);
+      });
+    });
+  });
+
   describe('#saveServices', function() {
     beforeEach(function() {
       sinon.stub(addServiceController, 'setDBProperty', Em.K);
