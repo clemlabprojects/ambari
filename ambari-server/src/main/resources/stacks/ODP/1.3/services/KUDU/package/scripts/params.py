@@ -183,8 +183,8 @@ driver_curl_target = None
 ranger_admin_hosts = default('/clusterHostInfo/ranger_admin_hosts', [])
 has_ranger_admin = len(ranger_admin_hosts) > 0
 
-namenode_host = default('/clusterHostInfo/namenode_host', None)
-has_namenode = namenode_host is not None
+namenode_hosts = default('/clusterHostInfo/namenode_hosts', [])
+has_namenode = len(namenode_hosts) > 0
 
 if has_namenode:
     hadoop_bin_dir = stack_select.get_hadoop_dir('bin')
