@@ -19,6 +19,9 @@ limitations under the License.
 import os
 
 from resource_management.core.resources.system import Execute, File
+from resource_management.core.resources.packaging import Package
+from resource_management.core import shell
+from ambari_commons.os_check import OSCheck
 from resource_management.libraries.functions.check_process_status import check_process_status
 from resource_management.libraries.functions.constants import StackFeature
 from resource_management.libraries.functions.format import format
@@ -29,11 +32,41 @@ from resource_management.libraries.script.script import Script
 from polaris import configure_polaris
 
 
+POLICY_RC_D = '/usr/sbin/policy-rc.d'
+
+
+def install_console_nginx():
+  """
+  The Console runs its own nginx process (nginx -c nginx-console.conf on polaris_console_port): it only needs the
+  nginx program. The deb package also enables and starts the system nginx.service with the default site on port 80
+  (and [::]:80, which fails where IPv6 is disabled), so on Debian/Ubuntu a fresh install runs with policy-rc.d denying
+  service starts, then the system service is disabled. An nginx already installed on the host is left as it is.
+  RPM installs never start or enable services.
+  """
+  if not OSCheck.is_ubuntu_family():
+    Package('nginx')
+    return
+  code, out = shell.call("dpkg-query -W -f='${Status}' nginx", quiet=True)
+  if code == 0 and 'install ok installed' in out:
+    return
+  created = False
+  if not os.path.exists(POLICY_RC_D):
+    File(POLICY_RC_D, content="#!/bin/sh\n# Polaris Console install: do not start services\nexit 101\n", mode=0o755)
+    created = True
+  try:
+    Package('nginx')
+  finally:
+    if created:
+      File(POLICY_RC_D, action='delete')
+  Execute('systemctl disable nginx.service', only_if='systemctl cat nginx.service')
+
+
 class PolarisConsole(Script):
   def install(self, env):
     import params
     env.set_params(params)
     self.install_packages(env)
+    install_console_nginx()
 
   def configure(self, env, upgrade_type=None, config_dir=None):
     import params
