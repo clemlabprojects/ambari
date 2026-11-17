@@ -94,6 +94,7 @@ limitations under the License.
 -krpc_port={{ impala_krpc_port }}
 {% if security_enabled %}
 -kerberos_reinit_interval={{ kerberos_reinit_interval }}
+-load_auth_to_local_rules={{load_auth_to_local_rules}}
 {% if enable_load_balancer %}
 -principal=impala/{{impala_load_balancer_host}}@{{realm_name}}
 {% else %}
