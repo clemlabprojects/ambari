@@ -2,6 +2,18 @@
   "services": [
     {
       "name": "KUDU",
+      "configurations": [
+        {
+          "ranger-kudu-audit": {
+            "xasecure.audit.jaas.Client.loginModuleName": "com.sun.security.auth.module.Krb5LoginModule",
+            "xasecure.audit.jaas.Client.loginModuleControlFlag": "required",
+            "xasecure.audit.jaas.Client.option.useKeyTab": "true",
+            "xasecure.audit.jaas.Client.option.storeKey": "false",
+            "xasecure.audit.jaas.Client.option.serviceName": "solr",
+            "xasecure.audit.destination.solr.force.use.inmemory.jaas.config": "true"
+          }
+        }
+      ],
       "components": [
         {
           "name": "KUDU_MASTER",
@@ -24,6 +36,16 @@
                   "access": ""
                 },
                 "configuration": "kudu-env/kudu_keytab"
+              }
+            },
+            {
+              "name": "ranger_kudu_audit",
+              "reference": "/KUDU/KUDU_MASTER/kudu_master_service",
+              "principal": {
+                "configuration": "ranger-kudu-audit/xasecure.audit.jaas.Client.option.principal"
+              },
+              "keytab": {
+                "configuration": "ranger-kudu-audit/xasecure.audit.jaas.Client.option.keyTab"
               }
             },
             {
