@@ -205,6 +205,7 @@ public class UpgradeJavaRuntime {
     plan.after.put(Configuration.SECONDARY_JAVA_HOME.getKey(), secondary);
     plan.primaryMajor = required.get("primary_java_major").getAsInt();
     plan.secondaryMajor = required.get("secondary_java_major").getAsInt();
+    plan.primaryFallbackMajor = fallbackMajor(required);
     try {
       plan.validationRequest = Long.parseLong(String.valueOf(input.get(VALIDATION)));
     } catch (NumberFormatException e) {
@@ -258,6 +259,7 @@ public class UpgradeJavaRuntime {
     plan.after.put(Configuration.SECONDARY_JAVA_HOME.getKey(), path(secondary));
     plan.primaryMajor = required.get("primary_java_major").getAsInt();
     plan.secondaryMajor = required.get("secondary_java_major").getAsInt();
+    plan.primaryFallbackMajor = fallbackMajor(required);
     try {
       plan.validationRequest = Long.parseLong(String.valueOf(validation));
     } catch (NumberFormatException e) {
@@ -292,8 +294,8 @@ public class UpgradeJavaRuntime {
       }
       JsonObject result = gson.fromJson(new String(task.getStructuredOut(), StandardCharsets.UTF_8), JsonObject.class);
       JsonObject checkedHomes = result.getAsJsonObject("upgrade_java");
-      if (!matches(checkedHomes, "primary", plan.after.get(Configuration.JAVA_HOME.getKey()), plan.primaryMajor)
-          || !matches(checkedHomes, "secondary", plan.after.get(Configuration.SECONDARY_JAVA_HOME.getKey()), plan.secondaryMajor)) {
+      if (!matches(checkedHomes, "primary", plan.after.get(Configuration.JAVA_HOME.getKey()), plan.primaryMajor, plan.primaryFallbackMajor)
+          || !matches(checkedHomes, "secondary", plan.after.get(Configuration.SECONDARY_JAVA_HOME.getKey()), plan.secondaryMajor, 0)) {
         throw new AmbariException("JDK selection changed or failed validation on " + task.getHostName());
       }
       checked.add(task.getHostName());
@@ -303,14 +305,20 @@ public class UpgradeJavaRuntime {
     }
   }
 
-  private boolean matches(JsonObject results, String name, String home, int major) {
+  /** The stack may accept an older JDK as the primary Java home next to the required one. */
+  public static int fallbackMajor(JsonObject required) {
+    return required.has("primary_java_major_fallback") ? required.get("primary_java_major_fallback").getAsInt() : 0;
+  }
+
+  private boolean matches(JsonObject results, String name, String home, int major, int fallbackMajor) {
     if (results == null || !results.has(name)) {
       return false;
     }
     JsonObject result = results.getAsJsonObject(name);
     return result.has("valid") && result.get("valid").getAsBoolean()
         && result.has("home") && home.equals(result.get("home").getAsString())
-        && result.has("major") && major == result.get("major").getAsInt();
+        && result.has("major")
+        && (major == result.get("major").getAsInt() || (fallbackMajor > 0 && fallbackMajor == result.get("major").getAsInt()));
   }
 
   private ExecutionCommand execution(HostRoleCommandEntity task) {
@@ -352,6 +360,7 @@ public class UpgradeJavaRuntime {
     public long validationRequest;
     public int primaryMajor;
     public int secondaryMajor;
+    public int primaryFallbackMajor;
     public boolean restore;
   }
 }

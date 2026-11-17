@@ -224,8 +224,8 @@ def setup_java():
 def check_java_runtime():
   """
   Fail early when a Java home does not have the JDK major version the stack version requires
-  (ODP 1.3.2.0+: JDK 17 primary, JDK 21 secondary), instead of letting components fail later
-  on class file versions. The secondary JDK is checked for the components that run on it.
+  (ODP 1.3.2.0+: JDK 21 as both the primary and the secondary Java home, JDK 17 accepted as the
+  primary one as a fallback), instead of letting components fail later on class file versions. The secondary JDK is checked for the components that run on it.
   Commands other than installs and (re)starts only log the problem, so services can still be stopped.
   """
   import params
@@ -233,7 +233,8 @@ def check_java_runtime():
     return
 
   try:
-    __check_java_major(params.java_home, params.required_primary_java_major, "primary", "--java-home")
+    __check_java_major(params.java_home, params.required_primary_java_major, "primary", "--java-home",
+                       params.fallback_primary_java_major)
     if params.java_home_selector == "secondary_java_home" and params.required_secondary_java_major:
       __check_java_major(params.secondary_java_home, params.required_secondary_java_major, "secondary",
                          "--secondary-java-home")
@@ -242,7 +243,7 @@ def check_java_runtime():
       raise
     Logger.warning(str(error))
 
-def __check_java_major(java_home, required_major, role, setup_option):
+def __check_java_major(java_home, required_major, role, setup_option, fallback_major=None):
   fix =format("Set it with 'ambari-server setup {setup_option}=<JDK {required_major} home>' on the Ambari Server, "
                "restart Ambari Server, then restart the services.")
   if not java_home:
@@ -254,6 +255,9 @@ def __check_java_major(java_home, required_major, role, setup_option):
   if code or not match:
     raise Fail(format("Cannot determine the Java version of the {role} Java home {java_home}: {output}"))
   major = int(match.group(2) if match.group(1) == "1" else match.group(1))
+  if fallback_major and major == int(fallback_major):
+    Logger.info(format("The {role} Java home {java_home} is JDK {major}, the accepted fallback for JDK {required_major}"))
+    return
   if major != int(required_major):
     raise Fail(format("ODP {java_requirement_stack_version} requires JDK {required_major} as the {role} Java home, "
                       "but {java_home} is JDK {major}. {fix}"))

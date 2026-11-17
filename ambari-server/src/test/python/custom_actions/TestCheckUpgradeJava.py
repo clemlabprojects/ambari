@@ -22,11 +22,11 @@ from resource_management.core.exceptions import Fail
 
 
 class TestCheckUpgradeJava(unittest.TestCase):
-  def check(self, output, expected=21, rc=0):
+  def check(self, output, expected=21, rc=0, fallback=None):
     with patch('check_upgrade_java.os.path.isfile', return_value=True), \
          patch('check_upgrade_java.os.access', return_value=True), \
          patch('check_upgrade_java.shell.call', return_value=(rc, output)) as call:
-      result = check_java('/opt/jdk', expected)
+      result = check_java('/opt/jdk', expected, fallback)
       call.assert_called_once_with(('/opt/jdk/bin/java', '-version'), timeout=20, quiet=True)
       return result
 
@@ -38,6 +38,12 @@ class TestCheckUpgradeJava(unittest.TestCase):
 
   def test_java_8_is_rejected(self):
     self.assertFalse(self.check('java version "1.8.0_492"', 17)['valid'])
+
+  def test_fallback_major_is_accepted_for_the_primary(self):
+    self.assertTrue(self.check('openjdk version "17.0.16"', 21, fallback='17')['valid'])
+    self.assertTrue(self.check('openjdk version "21.0.8"', 21, fallback='17')['valid'])
+    self.assertFalse(self.check('openjdk version "17.0.16"', 21)['valid'])
+    self.assertFalse(self.check('openjdk version "11.0.2"', 21, fallback='17')['valid'])
 
   def test_java_25_is_rejected(self):
     self.assertFalse(self.check('openjdk version "25.0.1"')['valid'])
@@ -71,7 +77,7 @@ class TestCheckUpgradeJava(unittest.TestCase):
   def test_action_reports_both_results_before_failing(self):
     action = CheckUpgradeJava()
     params = {'primary_java_home': '/jdk17', 'secondary_java_home': '/jdk21',
-              'primary_java_major': '17', 'secondary_java_major': '21'}
+              'primary_java_major': '21', 'secondary_java_major': '21', 'primary_java_major_fallback': '17'}
     with patch.object(action, 'get_config', return_value={'commandParams': params}), \
          patch.object(action, 'put_structured_out') as output, \
          patch('check_upgrade_java.check_java', side_effect=[{'valid': True}, {'valid': False}]):

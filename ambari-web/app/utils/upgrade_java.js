@@ -32,7 +32,7 @@ function hostRows(selection, tasks, finished) {
     var fresh = task.end_time > 0 && Date.now() - task.end_time < 30 * 60 * 1000;
     // A failed task may still contain a successful result for one of the two JDKs.
     var hasResults = fresh && ['COMPLETED', 'FAILED'].indexOf(task.status) !== -1;
-    var primaryValid = !!(hasResults && primary.valid && primary.home === selection.primary && primary.major === selection.primaryMajor);
+    var primaryValid = !!(hasResults && primary.valid && primary.home === selection.primary && (primary.major === selection.primaryMajor || (!!selection.primaryFallback && primary.major === selection.primaryFallback)));
     var secondaryValid = !!(hasResults && secondary.valid && secondary.home === selection.secondary && secondary.major === selection.secondaryMajor);
     var valid = task.status === 'COMPLETED' && primaryValid && secondaryValid;
     var statusKey = valid ? 'passed' : done ? (task.status === 'TIMEDOUT' ? 'timedOut' : 'failed') :
@@ -63,7 +63,9 @@ module.exports = {
       header: administration ? Em.I18n.t('admin.java.title') : Em.I18n.t('admin.upgrade.java.title').format(requirements.min_version),
       modalDialogClasses: ['upgrade-java-dialog'],
       introduction: Em.I18n.t('admin.upgrade.java.introduction').format(requirements.min_version),
-      primaryMinimum: Em.I18n.t('admin.upgrade.java.minimum').format(requirements.primary_java_major),
+      primaryMinimum: requirements.primary_java_major_fallback ?
+        Em.I18n.t('admin.upgrade.java.minimumOrFallback').format(requirements.primary_java_major, requirements.primary_java_major_fallback) :
+        Em.I18n.t('admin.upgrade.java.minimum').format(requirements.primary_java_major),
       secondaryMinimum: Em.I18n.t('admin.upgrade.java.minimum').format(requirements.secondary_java_major),
       activationMessage: Em.I18n.t(administration ? 'admin.java.activation' : 'admin.upgrade.java.activation'),
       validatedMessage: Em.I18n.t(administration ? 'admin.java.validated' : 'admin.upgrade.java.validated'),
@@ -72,6 +74,7 @@ module.exports = {
       primaryHome: requirements.primary_java_home || '',
       secondaryHome: requirements.secondary_java_home || '',
       primaryMajor: requirements.primary_java_major,
+      primaryFallback: requirements.primary_java_major_fallback,
       secondaryMajor: requirements.secondary_java_major,
       checking: false,
       saving: false,
@@ -157,7 +160,8 @@ module.exports = {
         var generation = this.incrementProperty('generation');
         var selection = {
           primary: this.get('primaryHome'), secondary: this.get('secondaryHome'),
-          primaryMajor: this.get('primaryMajor'), secondaryMajor: this.get('secondaryMajor')
+          primaryMajor: this.get('primaryMajor'), secondaryMajor: this.get('secondaryMajor'),
+          primaryFallback: this.get('primaryFallback')
         };
         this.setProperties({checking: true, validated: false, rows: [], error: ''});
         var failed = function () {

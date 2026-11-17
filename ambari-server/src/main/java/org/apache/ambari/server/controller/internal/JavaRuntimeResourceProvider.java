@@ -70,7 +70,7 @@ public class JavaRuntimeResourceProvider extends AbstractControllerResourceProvi
 
   static {
     for (String property : Arrays.asList("primary_java_home", "secondary_java_home", "java_home",
-        "primary_java_major", "secondary_java_major", "min_version", "validation_request_id",
+        "primary_java_major", "secondary_java_major", "primary_java_major_fallback", "min_version", "validation_request_id",
         "expected_java_home", "expected_primary_java_home", "expected_secondary_java_home")) {
       PROPERTIES.add(PREFIX + property);
     }
@@ -97,6 +97,9 @@ public class JavaRuntimeResourceProvider extends AbstractControllerResourceProvi
       for (String property : Arrays.asList("min_version", "primary_java_major", "secondary_java_major")) {
         resource.setProperty(PREFIX + property, property.endsWith("_major")
             ? required.get(property).getAsInt() : required.get(property).getAsString());
+      }
+      if (required.has("primary_java_major_fallback")) {
+        resource.setProperty(PREFIX + "primary_java_major_fallback", UpgradeJavaRuntime.fallbackMajor(required));
       }
       return Collections.singleton(resource);
     } catch (AmbariException e) {

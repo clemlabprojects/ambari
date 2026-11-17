@@ -196,7 +196,8 @@ public class UpgradeJavaRuntimeTest {
       when(source.getVersion()).thenReturn(sourceVersion);
       for (String targetVersion : Arrays.asList("1.3.2.0-36", "1.3.2.1-1", "1.3.3.0-1")) {
         when(repository.getVersion()).thenReturn(targetVersion);
-        assertEquals(17, runtime.transitionRequirements(cluster, repository).get("primary_java_major").getAsInt());
+        assertEquals(21, runtime.transitionRequirements(cluster, repository).get("primary_java_major").getAsInt());
+        assertEquals(17, UpgradeJavaRuntime.fallbackMajor(runtime.transitionRequirements(cluster, repository)));
       }
     }
   }

@@ -23,7 +23,7 @@ from resource_management.core.exceptions import Fail
 from resource_management.libraries.script import Script
 
 
-def check_java(home, expected_major):
+def check_java(home, expected_major, fallback_major=None):
   """Check an operator-selected JDK without changing alternatives or configuration."""
   result = {"home": home, "expected_major": int(expected_major), "valid": False}
   try:
@@ -40,8 +40,9 @@ def check_java(home, expected_major):
       raise ValueError("Cannot determine Java version: " + output[:500])
     major = int(match.group(2) if match.group(1) == "1" else match.group(1))
     result["major"] = major
-    result["valid"] = major == int(expected_major)
-    result["message"] = "Java {0}; expected {1}".format(major, expected_major)
+    accepted = [int(expected_major)] + ([int(fallback_major)] if fallback_major else [])
+    result["valid"] = major in accepted
+    result["message"] = "Java {0}; expected {1}".format(major, " or ".join(str(m) for m in accepted))
   except Exception as error:
     result["message"] = str(error)
   return result
@@ -50,7 +51,8 @@ def check_java(home, expected_major):
 class CheckUpgradeJava(Script):
   def actionexecute(self, env):
     params = self.get_config()["commandParams"]
-    results = {name: check_java(params[name + "_java_home"], params[name + "_java_major"])
+    results = {name: check_java(params[name + "_java_home"], params[name + "_java_major"],
+                                params.get(name + "_java_major_fallback"))
                for name in ("primary", "secondary")}
     self.put_structured_out({"upgrade_java": results})
     if not all(result["valid"] for result in results.values()):

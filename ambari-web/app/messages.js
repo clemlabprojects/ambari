@@ -27,6 +27,7 @@ Em.I18n.translations = {
   'admin.upgrade.java.title': 'JDK Requirements Starting with ODP {0}',
   'admin.upgrade.java.introduction': 'Starting with ODP {0}, the component runtime requirements are:',
   'admin.upgrade.java.minimum': 'Minimum JDK {0}',
+  'admin.upgrade.java.minimumOrFallback': 'JDK {0} (JDK {1} accepted as fallback)',
   'admin.upgrade.java.primaryComponents': 'HDFS, YARN, MapReduce2, HBase, ZooKeeper, Kafka, Atlas, Ranger, Ranger KMS, Knox and Ozone.',
   'admin.upgrade.java.secondaryComponents': 'Hive (Metastore, HiveServer2 and clients), Spark3 (History Server, Thrift Server, clients and Livy), Impala, Oozie, NiFi, NiFi Registry, Polaris and Amoro.',
   'admin.upgrade.java.explanation': 'Install both JDKs at identical absolute paths on every cluster host, including the Ambari Server host. Select the indicated JDK major versions; a newer major is not automatically supported. Application containers, including Hive/Tez and Spark jobs, also require a compatible runtime.',

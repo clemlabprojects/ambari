@@ -22,7 +22,7 @@
   <actionDefinition>
     <actionName>check_upgrade_java</actionName>
     <actionType>SYSTEM</actionType>
-    <inputs>primary_java_home, secondary_java_home, primary_java_major, secondary_java_major</inputs>
+    <inputs>primary_java_home, secondary_java_home, primary_java_major, secondary_java_major, primary_java_major_fallback</inputs>
     <targetService/>
     <targetComponent/>
     <defaultTimeout>60</defaultTimeout>

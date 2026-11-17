@@ -193,10 +193,12 @@ hue_server_hosts  = default("/clusterHostInfo/hue_server_hosts", [])
 # get the correct version to use for checking stack features
 version_for_stack_feature_checks = get_stack_feature_version(config)
 
-# JDK major versions the stack version requires outside upgrades (ODP 1.3.2.0+: primary JDK 17,
-# secondary JDK 21); upgrades select and validate them in the upgrade wizard instead
+# JDK major versions the stack version requires outside upgrades (ODP 1.3.2.0+: a single JDK 21,
+# set as both the primary and the secondary Java home; JDK 17 stays accepted as the primary Java
+# home as a fallback); upgrades select and validate them in the upgrade wizard instead
 required_primary_java_major = None
 required_secondary_java_major = None
+fallback_primary_java_major = None
 stack_features_json = default("/configurations/cluster-env/stack_features", None)
 stack_name = default("/clusterLevelParams/stack_name", None)
 # Installs of a new cluster carry no command version, only the bare stack version (1.3): use the
@@ -211,6 +213,7 @@ if stack_features_json and stack_name and default("/commandParams/upgrade_direct
     if stack_feature.get("name") == "upgrade_java_home_selection":
       required_primary_java_major = stack_feature.get("primary_java_major")
       required_secondary_java_major = stack_feature.get("secondary_java_major")
+      fallback_primary_java_major = stack_feature.get("primary_java_major_fallback")
 
 # Only installs and (re)starts are refused on a wrong JDK; stopping or decommissioning must still work
 enforce_java_runtime = config['roleCommand'] in ("INSTALL", "START") or \

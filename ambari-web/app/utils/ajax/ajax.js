@@ -2068,7 +2068,8 @@ var urls = {
             primary_java_home: data.primary,
             secondary_java_home: data.secondary,
             primary_java_major: data.primaryMajor,
-            secondary_java_major: data.secondaryMajor
+            secondary_java_major: data.secondaryMajor,
+            primary_java_major_fallback: data.primaryFallback
           }
         },
         'Requests/resource_filters': [{hosts: data.hosts.join(',')}]

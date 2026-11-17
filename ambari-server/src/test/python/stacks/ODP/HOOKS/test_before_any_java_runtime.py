@@ -47,9 +47,10 @@ class TestBeforeAnyJavaRuntime(unittest.TestCase):
     self.params = ModuleType("params")
     self.params.stack_version_unformatted = "1.3"
     self.params.java_requirement_stack_version = "1.3.2.0"
-    self.params.required_primary_java_major = 17
+    self.params.required_primary_java_major = 21
+    self.params.fallback_primary_java_major = 17
     self.params.required_secondary_java_major = 21
-    self.params.java_home = "/jdk17"
+    self.params.java_home = "/jdk21"
     self.params.secondary_java_home = "/jdk21"
     self.params.java_home_selector = "secondary_java_home"
     self.params.enforce_java_runtime = True
@@ -71,11 +72,22 @@ class TestBeforeAnyJavaRuntime(unittest.TestCase):
   def test_required_jdks_pass(self):
     self.check()
 
+  def test_jdk17_primary_is_accepted_as_fallback(self):
+    self.params.java_home = "/jdk17"
+    self.check()
+
+  def test_jdk17_primary_fails_without_fallback(self):
+    self.params.java_home = "/jdk17"
+    self.params.fallback_primary_java_major = None
+    with self.assertRaises(Fail) as error:
+      self.check()
+    self.assertIn("requires JDK 21 as the primary Java home, but /jdk17 is JDK 17", str(error.exception))
+
   def test_jdk8_primary_fails_with_the_setup_to_fix(self):
     self.params.java_home = "/jdk8"
     with self.assertRaises(Fail) as error:
       self.check()
-    self.assertIn("ODP 1.3.2.0 requires JDK 17 as the primary Java home, but /jdk8 is JDK 8", str(error.exception))
+    self.assertIn("ODP 1.3.2.0 requires JDK 21 as the primary Java home, but /jdk8 is JDK 8", str(error.exception))
     self.assertIn("--java-home", str(error.exception))
 
   def test_stop_only_warns_on_a_wrong_jdk(self):
