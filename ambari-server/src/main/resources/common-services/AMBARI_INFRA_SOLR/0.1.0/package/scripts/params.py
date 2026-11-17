@@ -137,7 +137,7 @@ if "infra-solr-env" in config['configurations']:
 if 'infra-solr-security-json' in config['configurations']:
   infra_solr_security_manually_managed = default("/configurations/infra-solr-security-json/infra_solr_security_manually_managed", False)
 
-default_ranger_audit_users = 'nn,hbase,hive,knox,kafka,kms,storm,yarn,nifi,nifiregistry'
+default_ranger_audit_users = 'nn,hbase,hive,knox,kafka,kms,storm,yarn,nifi,nifiregistry,kudu,om,polaris'
 
 if security_enabled:
   kinit_path_local = status_params.kinit_path_local
@@ -170,6 +170,9 @@ if security_enabled:
   ranger_audit_principals.append(default('configurations/ranger-yarn-audit/' + ranger_audit_principal_conf_key, 'yarn'))
   ranger_audit_principals.append(default('configurations/ranger-nifi-audit/' + ranger_audit_principal_conf_key, 'nifi'))
   ranger_audit_principals.append(default('configurations/ranger-nifi-registry-audit/' + ranger_audit_principal_conf_key, 'nifiregistry'))
+  ranger_audit_principals.append(default('configurations/ranger-kudu-audit/' + ranger_audit_principal_conf_key, 'kudu'))
+  ranger_audit_principals.append(default('configurations/ranger-ozone-audit/' + ranger_audit_principal_conf_key, 'om'))
+  ranger_audit_principals.append(default('configurations/ranger-polaris-audit/' + ranger_audit_principal_conf_key, 'polaris'))
   ranger_audit_names_from_principals = [ get_name_from_principal(x) for x in ranger_audit_principals ]
   default_ranger_audit_users = ','.join(ranger_audit_names_from_principals)
 
