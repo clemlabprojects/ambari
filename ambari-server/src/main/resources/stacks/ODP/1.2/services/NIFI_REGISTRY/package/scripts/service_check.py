@@ -27,6 +27,7 @@ from resource_management.core import shell
 from resource_management.core.logger import Logger
 from resource_management.libraries.functions.format import format
 from resource_management.libraries.script.script import Script
+import ssl
 from resource_management.core import sudo
 
 from ambari_commons.inet_utils import openurl
@@ -46,7 +47,8 @@ class NifiRegistryServiceCheck(Script):
             url = "https://{0}:{1}".format(params.nifi_registry_host, params.nifi_registry_ssl_port)
 
         Logger.info("Checking Nifi Registry portal {0} status".format(url))
-        if params.nifi_registry_ssl_enabled:
+        # NiFi 2 no longer ships tls-toolkit.sh and encrypt-config.sh, the toolkit check only works with NiFi 1
+        if params.nifi_registry_ssl_enabled and params.stack_support_admin_toolkit:
             NifiRegistryServiceCheck.check_nifi_registry_portal_with_toolkit(url,params.jdk64_home,params.nifi_registry_install_dir,params.nifi_registry_bootstrap_file, params.toolkit_tmp_dir, params.stack_version_buildnum)
         else:
             NifiRegistryServiceCheck.check_nifi_registry_portal_with_python(url + "/nifi-registry")
@@ -57,7 +59,9 @@ class NifiRegistryServiceCheck(Script):
     def check_nifi_registry_portal_with_python(url):
         try:
             request = urllib.request.Request(url)
-            result = openurl(request, timeout=20)
+            # a liveness probe: the certificate is usually signed by the cluster CA, which the system does not trust
+            context = ssl._create_unverified_context() if url.startswith("https://") else None
+            result = openurl(request, timeout=20, context=context)
             response_code = result.getcode()
             if response_code == 200 or response_code == 401:
                 Logger.info("Nifi Registry portal {0} is up. Response code {1}".format(url, response_code))
