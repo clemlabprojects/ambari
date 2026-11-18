@@ -86,6 +86,13 @@ master_webserver_port = default('/configurations/kudu-master-env/webserver_port'
 master_wal_dir = default('/configurations/kudu-master-env/fs_wal_dir', '/var/lib/kudu/master')
 master_data_dirs = default('/configurations/kudu-master-env/fs_data_dirs', '/var/lib/kudu/master')
 master_additional_flags = default('/configurations/kudu-master-env/master_additional_flags', '')
+
+# Impala authorizes its users itself (Ranger) and then calls Kudu as the impala service user:
+# Kudu must trust that user, or every Kudu table operation from Impala is refused
+# ("Unauthorized action") once Kudu authorizes with Ranger.
+impala_daemon_hosts = default('/clusterHostInfo/impala_daemon_hosts', [])
+impala_user = default('/configurations/impala-env/impala_user', 'impala')
+kudu_trusted_users = impala_user if len(impala_daemon_hosts) > 0 else ''
 bootstrap_leader_override = default('/configurations/kudu-master-env/bootstrap_leader_override', '') or ''
 bootstrap_leader_override = bootstrap_leader_override.strip()
 bootstrap_timeout_seconds = int(default('/configurations/kudu-master-env/bootstrap_timeout_seconds', 180))
