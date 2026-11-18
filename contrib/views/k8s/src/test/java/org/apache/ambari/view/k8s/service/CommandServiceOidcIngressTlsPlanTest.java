@@ -83,4 +83,33 @@ class CommandServiceOidcIngressTlsPlanTest {
         assertTrue(types.contains("INGRESS_TLS_SELFSIGN"), types.toString());
         assertTrue(types.contains("OIDC_REGISTER_CLIENT"), types.toString());
     }
+
+    /**
+     * A company certificate pasted in the wizard (uploadLeaf): its Secret is created while the deploy is planned and the
+     * Ingress gets it through a Helm override, which serves the https callback as well as a minted certificate.
+     */
+    @Test
+    void anUploadedCompanyCertificateLetsTheDeployThrough() throws Exception {
+        HelmDeployRequest request = fixture.trino(true);
+        request.setIngressTlsSelfSign(null);
+        String[] company = CaRegistryServiceTest.issuingCa("trino.example.com");
+        request.setIngressTlsUpload(new java.util.LinkedHashMap<>(java.util.Map.of("certPem", company[0], "keyPem", company[1])));
+
+        List<String> types = DeployPlanningFixture.types(fixture.steps(fixture.plan(request)));
+
+        assertTrue(types.contains("OIDC_REGISTER_CLIENT"), types.toString());
+        assertFalse(types.contains("INGRESS_TLS_SELFSIGN"), types.toString());
+    }
+
+    @Test
+    void onlyAnOverrideNamingAnIngressSecretCounts() {
+        assertTrue(CommandService.ingressTlsOverridden(java.util.Map.of("_ov",
+                java.util.Map.of("ingress.tls[0].secretName", "trino-ingress-tls"))));
+        assertFalse(CommandService.ingressTlsOverridden(java.util.Map.of("_ov",
+                java.util.Map.of("ingress.tls[0].secretName", " "))));
+        assertFalse(CommandService.ingressTlsOverridden(java.util.Map.of("_ov",
+                java.util.Map.of("server.https.keystore.secretName", "x"))));
+        assertFalse(CommandService.ingressTlsOverridden(java.util.Map.of()));
+    }
+
 }

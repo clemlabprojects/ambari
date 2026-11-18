@@ -20883,6 +20883,9 @@ public class CommandService {
                 Object tlsSecret = ingMap.get("tlsSecret");
                 if (tlsSecret instanceof String s && !s.isBlank()) tlsConfigured = true;
             }
+            // An uploaded certificate (uploadLeaf): its Secret is created while the deploy is planned, and the Ingress
+            // gets it through a Helm override, not the chart values.
+            if (!tlsConfigured && ingressTlsOverridden(rootParams)) tlsConfigured = true;
             // Any TLS-provisioning sibling step counts as "TLS configured" — the Secret
             // will exist (or be reconciled) before HELM_DEPLOY actually rolls out:
             //   INGRESS_TLS_SELFSIGN          → view mints + writes Secret in-line
@@ -20914,6 +20917,20 @@ public class CommandService {
         }
     
         return null;
+    }
+
+    /** Whether the plan's Helm overrides give the Ingress a TLS Secret ({@code ingress.tls[0].secretName}). */
+    static boolean ingressTlsOverridden(Map<String, Object> rootParams) {
+        Object ov = rootParams == null ? null : rootParams.get("_ov");
+        if (!(ov instanceof Map<?, ?> overrides)) return false;
+        for (Map.Entry<?, ?> e : overrides.entrySet()) {
+            String path = String.valueOf(e.getKey());
+            if (path.startsWith("ingress.tls[") && path.endsWith("].secretName")
+                    && e.getValue() != null && !String.valueOf(e.getValue()).isBlank()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** What a deploy refused for its OIDC client must change (see {@link #refuseOidcWithoutIngressTls}). */
