@@ -87,9 +87,25 @@ class ImpalaAtlasExtractor(Script):
         # gated on atlas_in_cluster so a missing file there is a no-op anyway.
         if params.atlas_in_cluster:
             atlas_hook_filepath = os.path.join(params.atlas_conf_dir, params.atlas_hook_filename)
+            atlas_hook_properties = dict(params.impala_atlas_application_properties)
+            # Kafka 3 producers are idempotent by default, which needs the cluster
+            # idempotent_write right that the impala user does not have (same
+            # default as the Spark hook).
+            atlas_hook_properties.setdefault("atlas.kafka.enable.idempotence", "false")
+            if params.security_enabled:
+                # The extractor is a daemon: it logs in to Kafka with the impala
+                # keytab, a ticket cache would expire. Explicit values in
+                # impala-atlas-application.properties win.
+                for key, value in (
+                    ("atlas.jaas.KafkaClient.option.useKeyTab", "true"),
+                    ("atlas.jaas.KafkaClient.option.storeKey", "true"),
+                    ("atlas.jaas.KafkaClient.option.keyTab", params.impala_keytab),
+                    ("atlas.jaas.KafkaClient.option.principal", params.impala_principal),
+                ):
+                    atlas_hook_properties.setdefault(key, value)
             setup_atlas_hook(
                 SERVICE.IMPALA,
-                params.impala_atlas_application_properties,
+                atlas_hook_properties,
                 atlas_hook_filepath,
                 params.impala_user,
                 params.impala_group,
@@ -215,8 +231,10 @@ class ImpalaAtlasExtractor(Script):
             "ATLAS_CONF_DIR=\"%s\"\n"
             "JAVA_HOME=\"%s\"\n"
             "LOG_FILE=\"%s\"\n"
-            "STACK_ROOT=\"/usr/odp/current\"\n"
-            "STACK_VERSION_ROOT=\"%s\"\n"
+            "# The hook, Impala and Hadoop jars live under the versioned stack directory\n"
+            "# (/usr/odp/<version>), not under <stack root>/current. Resolve it from the\n"
+            "# impala-daemon link on every start so a stack upgrade needs no new launcher.\n"
+            "STACK_VERSION_ROOT=\"$(dirname \"$(readlink -f \"%s/impala-daemon\")\")\"\n"
             "\n"
             "trap 'echo \"$(date -Iseconds) caught SIGTERM, exiting\" >> \"$LOG_FILE\"; exit 0' TERM INT\n"
             "\n"
@@ -229,9 +247,9 @@ class ImpalaAtlasExtractor(Script):
             "CP=\"$ATLAS_CONF_DIR\"\n"
             "CP=\"$CP:$STACK_VERSION_ROOT/atlas-impala-hook/hook/hook/impala/atlas-impala-plugin-impl/*\"\n"
             "CP=\"$CP:$STACK_VERSION_ROOT/atlas-impala-hook/hook/hook/impala/*\"\n"
-            "for jar in $STACK_VERSION_ROOT/impala/lib/jars/impala-frontend-*.jar; do CP=\"$CP:$jar\"; done\n"
-            "CP=\"$CP:$STACK_VERSION_ROOT/hadoop/lib/*\"\n"
-            "CP=\"$CP:$STACK_VERSION_ROOT/hadoop/share/hadoop/common/lib/*\"\n"
+            "# Impala's own jars: impala-frontend (QueryEventHook), hadoop-common and the\n"
+            "# commons-lang 2 that the hook's commons-configuration needs.\n"
+            "CP=\"$CP:$STACK_VERSION_ROOT/impala/lib/jars/*\"\n"
             "\n"
             "while true; do\n"
             "  if [ -d \"$LINEAGE_DIR\" ]; then\n"

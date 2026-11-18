@@ -297,6 +297,8 @@ has_hive_server = not len(hive_server_hosts) == 0
 # Nifi Publish
 nifi_hosts = default('/clusterHostInfo/nifi_master_hosts', [])
 has_nifi = not len(nifi_hosts) == 0
+impala_daemon_hosts = default('/clusterHostInfo/impala_daemon_hosts', [])
+has_impala = not len(impala_daemon_hosts) == 0
 
 # ToDo: Kafka port to Atlas
 # Used while upgrading the stack in a kerberized cluster and running kafka-acls.sh
@@ -616,6 +618,9 @@ if ranger_kafka_plugin_enabled:
     if has_nifi:
       nifi_user = config['configurations']['nifi-env']['nifi_user']
       atlas_hook_publishers.append(nifi_user)
+  if has_impala:
+    # the Impala Atlas Extractor publishes Impala lineage to ATLAS_HOOK as the impala service user
+    atlas_hook_publishers.append(default('/configurations/impala-env/impala_user', 'impala'))
   ranger_atlas_kafka_policies = []
   ranger_atlas_kafka_policies.append({
     "isEnabled": "true",
