@@ -26,6 +26,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The service definition the UI receives is this class serialised, and properties it does not declare
@@ -49,5 +50,32 @@ class StackServiceDefTest {
             Map<String, Object> warn = (Map<String, Object>) tagSync.get("warnUnlessValueTrue");
             assertEquals("ranger.tagSync.enabled", warn.get("path"));
         }
+    }
+
+    /**
+     * Trino's chart was published as clemlab-trino until 1.43.x and as trino from 1.44.0: a release installed from
+     * clemlab-trino is upgraded with trino, and redeployed at its own version with clemlab-trino, the only name that
+     * version exists under.
+     */
+    @Test
+    void trinoReleasesInstalledAsClemlabTrinoMoveToTheTrinoChartFrom1440() throws Exception {
+        try (InputStream in = getClass().getResourceAsStream("/KDPS/services/TRINO/service.json")) {
+            assertNotNull(in, "TRINO/service.json must be on the classpath");
+            StackServiceDef def = new ObjectMapper().readValue(in, StackServiceDef.class);
+
+            assertEquals("trino", def.currentChart("clemlab-trino", def.version), "the catalog version");
+            assertEquals("trino", def.currentChart("clemlab-trino", "1.44.0"));
+            assertEquals("trino", def.currentChart("clemlab-trino", null), "no version: Helm takes the newest");
+            assertEquals("clemlab-trino", def.currentChart("clemlab-trino", "1.43.21"), "a redeploy at its version");
+            assertEquals("trino", def.currentChart("trino", "1.44.1"));
+            assertEquals("my-trino", def.currentChart("my-trino", "1.44.1"), "a chart the operator named keeps its name");
+        }
+    }
+
+    @Test
+    void chartVersionsCompareNumerically() {
+        assertTrue(StackServiceDef.compareVersions("1.44.0", "1.43.21") > 0);
+        assertTrue(StackServiceDef.compareVersions("1.9.0", "1.10.0") < 0);
+        assertEquals(0, StackServiceDef.compareVersions("1.44", "1.44.0"));
     }
 }

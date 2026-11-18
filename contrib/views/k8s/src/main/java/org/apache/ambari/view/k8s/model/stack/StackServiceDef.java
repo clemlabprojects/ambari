@@ -29,6 +29,13 @@ public class StackServiceDef {
     public String name;          // "SUPERSET"
     public String label;         // "Apache Superset"
     public String chart;         // "apache/superset"
+    /**
+     * Names the chart was published under before, each with the first version published as {@link #chart}: from that
+     * version on, a release installed from the former name is deployed with {@link #chart}, below it with the name it
+     * has (Trino: "clemlab-trino" until 1.43.x, "trino" from 1.44.0, whose nameOverride keeps the names of the
+     * release's resources).
+     */
+    public Map<String, String> formerCharts;
     public String description;
     public String version;
     /** Default Helm repo id this catalog entry expects the chart to come from.
@@ -333,4 +340,40 @@ public class StackServiceDef {
      * needs longer, such as one that pulls many large images or runs long migrations during its first install.
      */
     public Map<String, Object> gitops;
+
+    /**
+     * The chart a release of this service is deployed with at {@code version}: {@link #chart} when {@code deployedChart}
+     * is one of its {@link #formerCharts} and {@code version} was published under the current name (no version: Helm
+     * takes the newest), the chart as given otherwise.
+     */
+    public String currentChart(String deployedChart, String version) {
+        if (deployedChart == null || chart == null || formerCharts == null) {
+            return deployedChart;
+        }
+        String since = formerCharts.get(deployedChart.trim());
+        if (since == null) {
+            return deployedChart;
+        }
+        return version == null || version.isBlank() || compareVersions(version.trim(), since) >= 0 ? chart : deployedChart;
+    }
+
+    /** Compares dotted chart versions numerically, part by part ("1.44.0" > "1.43.21"). */
+    static int compareVersions(String a, String b) {
+        String[] pa = a.split("[.-]");
+        String[] pb = b.split("[.-]");
+        for (int i = 0; i < Math.max(pa.length, pb.length); i++) {
+            String sa = i < pa.length ? pa[i] : "0";
+            String sb = i < pb.length ? pb[i] : "0";
+            int c;
+            try {
+                c = Integer.compare(Integer.parseInt(sa), Integer.parseInt(sb));
+            } catch (NumberFormatException e) {
+                c = sa.compareTo(sb);
+            }
+            if (c != 0) {
+                return c;
+            }
+        }
+        return 0;
+    }
 }

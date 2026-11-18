@@ -6427,7 +6427,7 @@ public class CommandService {
                 .writeCacheFile("values-" + commandId, gson.toJson(deployedValues));
 
         Map<String, Object> rootParams = new LinkedHashMap<>();
-        rootParams.put("chart", releaseMetadata.getChartRef());
+        rootParams.put("chart", currentChart(releaseMetadata.getServiceKey(), releaseMetadata.getChartRef(), targetVersion));
         rootParams.put("releaseName", releaseName);
         rootParams.put("namespace", namespace);
         rootParams.put("serviceKey", releaseMetadata.getServiceKey());
@@ -6533,6 +6533,9 @@ public class CommandService {
         // security refresh, autoscaling change, the wizard's query parameters) keeps the release's. Done first, so
         // the version check, every backend and the recorded parameters all see the same values.
         ChartSource chartSource = applyReleaseDefaults(request, repoId, version, recorded);
+        // A release installed from a chart since renamed (Upgrade/Config starts from the release's chart) is deployed
+        // with the current one: the former name has no newer versions.
+        request.setChart(currentChart(request.getServiceKey(), request.getChart(), chartSource.version()));
 
         // A deploy that names a security profile is refused before anything is prepared when the profile is gone
         // (deleted or renamed) or cannot be read: deployed without it, the release would lose its LDAP or OIDC login.
@@ -8380,6 +8383,31 @@ public class CommandService {
     }
 
     /**
+     * The chart to deploy at {@code version} for a release of {@code serviceKey}: the service's current chart when
+     * {@code chart} is a name it was published under before and {@code version} came out under the current one (see
+     * {@link StackServiceDef#formerCharts}), {@code chart} otherwise. Upgrade/Config and the chart upgrade start from
+     * the chart the release was installed with, whose former name has no newer versions; a redeploy at the release's
+     * own version keeps it.
+     */
+    String currentChart(String serviceKey, String chart, String version) {
+        if (serviceKey == null || serviceKey.isBlank() || chart == null) {
+            return chart;
+        }
+        String current;
+        try {
+            current = new StackDefinitionService(ctx).getServiceDefinition(serviceKey).currentChart(chart, version);
+        } catch (RuntimeException e) {
+            // A service this view has no definition for keeps the chart it names.
+            return chart;
+        }
+        if (!chart.equals(current)) {
+            LOG.info("The chart {} of a {} release is published as {} from the version deployed ({}): deploying {}",
+                    chart, serviceKey, current, version, current);
+        }
+        return current;
+    }
+
+    /**
      * Plans and persists the command tree of a release deploy, without starting it.
      *
      * @param gitOps whether the release is committed to Git for Flux to apply, instead of installed with Helm: then the
@@ -8394,6 +8422,7 @@ public class CommandService {
                              AmbariAliasResolver ambariAliasResolver, boolean gitOps) {
         // Refused before anything is planned.
         checkDeployCluster(request);
+        request.setChart(currentChart(request.getServiceKey(), request.getChart(), version));
         String namespace = request.getNamespace();
         String release = request.getReleaseName();
         boolean hadTagSyncAccount = tagSyncAccountRecorded(namespace, release);
@@ -12173,7 +12202,9 @@ public class CommandService {
                                     releaseName,
                                     existing.getServiceKey(),
                                     existing.getPlatformContextId(),
-                                    existing.getChartRef(),
+                                    // The chart this upgrade ran: a release upgraded from a chart since renamed
+                                    // (clemlab-trino) is on the current one, which its next redeploy must use.
+                                    chartName != null && !chartName.isBlank() ? chartName : existing.getChartRef(),
                                     existing.getRepoId(),
                                     version,
                                     valuesMap,

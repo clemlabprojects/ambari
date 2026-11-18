@@ -1,6 +1,7 @@
 {
   "label": "Trino",
   "chart": "trino",
+  "formerCharts": {"clemlab-trino": "1.44.0"},
   "secretName": "registry-credentials",
   "version": "1.44.1",
   "dynamicValues": [
