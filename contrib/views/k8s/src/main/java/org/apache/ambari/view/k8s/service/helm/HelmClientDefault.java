@@ -90,26 +90,8 @@ public class HelmClientDefault implements HelmClient {
                           int timeoutSeconds, boolean createNamespace, boolean wait, boolean atomic, boolean dryRun) {
         Path valuesFile = writeValues(values);
         try {
-            InstallCommand installCommand = Helm.install(chartRef)
-                .withName(releaseName)
-                .withNamespace(namespace)
-                .withTimeout(timeoutSeconds)
-                .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
-                .withValuesFile(valuesFile);
-
-            if (createNamespace) installCommand = installCommand.createNamespace();
-            if (atomic) installCommand = installCommand.atomic();
-            if (wait) installCommand = installCommand.waitReady();
-            // CRITICAL: apply dry-run when requested. Without it the "validate chart (dry-run)" step
-            // performs a REAL install — which for a chart with post-install hook jobs (e.g. OpenMetadata's
-            // airflow create-user/migrate-db) BLOCKS waiting on those hooks and leaves a stuck
-            // pending release, so the next deploy fails with "another operation in progress".
-            if (dryRun) installCommand = installCommand.dryRun();
-
-            if (!chartRef.startsWith("oci://")) {
-                installCommand = installCommand.withRepositoryConfig(repositoriesConfig);
-            }
-            return installCommand.call();
+            return installCommand(chartRef, chartVersion, releaseName, namespace, repositoriesConfig, kubeconfigContents,
+                    valuesFile, timeoutSeconds, createNamespace, wait, atomic, dryRun).call();
         } finally {
             try { 
                 Files.deleteIfExists(valuesFile); 
@@ -117,6 +99,37 @@ public class HelmClientDefault implements HelmClient {
                 // Ignore cleanup errors
             }
         }
+    }
+
+    /**
+     * The install {@link #install} runs. {@code chartVersion} is Helm's {@code --version}: without it Helm installs the
+     * newest version of the chart, not the one KDPS planned and records for the release.
+     */
+    static InstallCommand installCommand(String chartRef, String chartVersion, String releaseName, String namespace,
+                                         Path repositoriesConfig, String kubeconfigContents, Path valuesFile,
+                                         int timeoutSeconds, boolean createNamespace, boolean wait, boolean atomic,
+                                         boolean dryRun) {
+        InstallCommand installCommand = Helm.install(chartRef)
+            .withName(releaseName)
+            .withNamespace(namespace)
+            .withTimeout(timeoutSeconds)
+            .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
+            .withValuesFile(valuesFile);
+
+        if (chartVersion != null && !chartVersion.isBlank()) installCommand = installCommand.withVersion(chartVersion.trim());
+        if (createNamespace) installCommand = installCommand.createNamespace();
+        if (atomic) installCommand = installCommand.atomic();
+        if (wait) installCommand = installCommand.waitReady();
+        // CRITICAL: apply dry-run when requested. Without it the "validate chart (dry-run)" step
+        // performs a REAL install — which for a chart with post-install hook jobs (e.g. OpenMetadata's
+        // airflow create-user/migrate-db) BLOCKS waiting on those hooks and leaves a stuck
+        // pending release, so the next deploy fails with "another operation in progress".
+        if (dryRun) installCommand = installCommand.dryRun();
+
+        if (!chartRef.startsWith("oci://")) {
+            installCommand = installCommand.withRepositoryConfig(repositoriesConfig);
+        }
+        return installCommand;
     }
 
     @Override
@@ -127,23 +140,8 @@ public class HelmClientDefault implements HelmClient {
      {
         Path valuesFile = writeValues(values);
         try {
-            UpgradeCommand upgradeCommand = Helm.upgrade(chartRef)
-                .withName(releaseName)
-                .withNamespace(namespace)
-                .withTimeout(timeoutSeconds)
-                .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
-                .withValuesFile(valuesFile);
-
-            if (atomic) upgradeCommand = upgradeCommand.atomic();
-            if (wait) upgradeCommand = upgradeCommand.waitReady();
-            // Apply dry-run when requested (see install() — a "dry-run" that really installs blocks
-            // on post-install hooks and leaves a stuck pending release).
-            if (dryRun) upgradeCommand = upgradeCommand.dryRun();
-
-            if (!chartRef.startsWith("oci://")) {
-                upgradeCommand = upgradeCommand.withRepositoryConfig(repositoriesConfig);
-            }
-            return upgradeCommand.call();
+            return upgradeCommand(chartRef, chartVersion, releaseName, namespace, repositoriesConfig, kubeconfigContents,
+                    valuesFile, timeoutSeconds, wait, atomic, dryRun).call();
         } finally {
             try { 
                 Files.deleteIfExists(valuesFile); 
@@ -151,6 +149,33 @@ public class HelmClientDefault implements HelmClient {
                 // Ignore cleanup errors
             }
         }
+    }
+
+    /**
+     * The upgrade {@link #upgrade} runs. {@code chartVersion} is Helm's {@code --version}: without it Helm upgrades
+     * to the newest version of the chart, whatever version was asked for.
+     */
+    static UpgradeCommand upgradeCommand(String chartRef, String chartVersion, String releaseName, String namespace,
+                                         Path repositoriesConfig, String kubeconfigContents, Path valuesFile,
+                                         int timeoutSeconds, boolean wait, boolean atomic, boolean dryRun) {
+        UpgradeCommand upgradeCommand = Helm.upgrade(chartRef)
+            .withName(releaseName)
+            .withNamespace(namespace)
+            .withTimeout(timeoutSeconds)
+            .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
+            .withValuesFile(valuesFile);
+
+        if (chartVersion != null && !chartVersion.isBlank()) upgradeCommand = upgradeCommand.withVersion(chartVersion.trim());
+        if (atomic) upgradeCommand = upgradeCommand.atomic();
+        if (wait) upgradeCommand = upgradeCommand.waitReady();
+        // Apply dry-run when requested (see install() — a "dry-run" that really installs blocks
+        // on post-install hooks and leaves a stuck pending release).
+        if (dryRun) upgradeCommand = upgradeCommand.dryRun();
+
+        if (!chartRef.startsWith("oci://")) {
+            upgradeCommand = upgradeCommand.withRepositoryConfig(repositoriesConfig);
+        }
+        return upgradeCommand;
     }
 
     @Override
