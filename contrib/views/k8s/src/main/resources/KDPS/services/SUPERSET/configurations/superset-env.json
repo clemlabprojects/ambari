@@ -7,7 +7,7 @@
       "name": "ROW_LIMIT",
       "displayName": "Row Limit",
       "value": 5000,
-      "description": "Default row limit for SQL Lab",
+      "description": "Default row limit of chart data queries (Superset ROW_LIMIT); SQL Lab has its own limits.",
       "type": "int"
     }
   ]

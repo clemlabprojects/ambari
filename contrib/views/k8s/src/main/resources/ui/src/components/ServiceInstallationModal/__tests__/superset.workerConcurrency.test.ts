@@ -35,6 +35,6 @@ describe('SUPERSET service.json — Celery worker processes', () => {
   });
 
   it('deploys a chart that reads the process count', () => {
-    expect(def.version).toBe('0.12.55');
+    expect(def.version).toBe('0.12.56');
   });
 });

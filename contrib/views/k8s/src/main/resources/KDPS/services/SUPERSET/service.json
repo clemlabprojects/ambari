@@ -2,7 +2,7 @@
   "label": "Superset",
   "chart": "superset",
   "secretName": "registry-credentials",
-  "version": "0.12.55",
+  "version": "0.12.56",
   "dependencies": {
     "kerberos-keytab-mutating-webhook": {
       "fullnameOverride": "keytab-webhook",
@@ -132,6 +132,13 @@
     {
       "name": "runAsUserOverride",
       "from": { "type": "form", "field": "runAsUser" }
+    },
+    {
+      "name": "supersetReleaseName",
+      "from": {
+        "type": "form",
+        "field": "releaseName"
+      }
     },
     {
       "name": "hiveHostPort",
@@ -856,6 +863,29 @@
           "from": {
             "type": "var",
             "name": "supersetSecret"
+          }
+        }
+      ]
+    },
+    {
+      "name": "superset-settings-env",
+      "comment": "The Superset configuration (superset-env: ROW_LIMIT) is written to <release>-superset-settings; the pods read it from there. Optional: a release without that Secret (upgraded from the Releases page, or written to Git) starts with Superset's default.",
+      "skipIfVarEmpty": "supersetReleaseName",
+      "targets": [
+        {
+          "path": "extraEnvRaw[]",
+          "from": {
+            "type": "template",
+            "template": {
+              "name": "ROW_LIMIT",
+              "valueFrom": {
+                "secretKeyRef": {
+                  "name": "${supersetReleaseName}-superset-settings",
+                  "key": "ROW_LIMIT",
+                  "optional": true
+                }
+              }
+            }
           }
         }
       ]
