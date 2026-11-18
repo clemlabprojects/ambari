@@ -78,7 +78,8 @@ def setup_ranger_hive(upgrade_type = None):
                            mode=0o755,
                            recursive_chmod=True
         )
-        params.HdfsResource("/ranger/audit/hive/hiveServer2",
+        # the Ranger Hive plugin of HiveServer2 writes its audits to <audit dir>/hiveServer2
+        params.HdfsResource("/ranger/audit/hiveServer2",
                            type="directory",
                            action="create_on_execute",
                            owner=params.hive_user,
