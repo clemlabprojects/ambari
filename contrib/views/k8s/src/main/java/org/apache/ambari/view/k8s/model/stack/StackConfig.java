@@ -25,6 +25,13 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class StackConfig {
     public String name;          // "superset-env"
+    /**
+     * What the Secret KDPS writes this configuration to is named after, instead of {@link #name}: the Secret is
+     * {@code <release>-<secretSuffix>}. For a configuration whose default name a chart takes for one of its own
+     * Secrets: Superset's chart names its env Secret {@code <release>-superset-env} for a release whose name lacks
+     * "superset", which Helm then refuses to create over the one KDPS wrote.
+     */
+    public String secretSuffix;
     public String label;         // optional display label
     public String description;
     public List<StackProperty> properties;

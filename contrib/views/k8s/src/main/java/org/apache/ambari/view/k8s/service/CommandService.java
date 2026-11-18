@@ -11823,7 +11823,7 @@ public class CommandService {
 
                     // 3. Process each Config File (e.g., superset-env, superset-files)
                     for (StackConfig cfg : configs) {
-                        String secretName = releaseName + "-" + cfg.name; // Convention: <release>-<configName>
+                        String secretName = configurationSecretName(releaseName, cfg);
                         Map<String, byte[]> secretData = new LinkedHashMap<>();
 
                         for (StackProperty prop : cfg.properties) {
@@ -20954,6 +20954,16 @@ public class CommandService {
         }
     
         return null;
+    }
+
+    /**
+     * The Secret a service configuration is written to: {@code <release>-<configuration>}, or
+     * {@code <release>-<secretSuffix>} for a configuration that names one (see {@link StackConfig#secretSuffix}).
+     */
+    static String configurationSecretName(String releaseName, StackConfig configuration) {
+        String suffix = configuration.secretSuffix != null && !configuration.secretSuffix.isBlank()
+                ? configuration.secretSuffix.trim() : configuration.name;
+        return releaseName + "-" + suffix;
     }
 
     /** Whether the plan's Helm overrides give the Ingress a TLS Secret ({@code ingress.tls[0].secretName}). */

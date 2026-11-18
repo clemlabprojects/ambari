@@ -1,5 +1,6 @@
 {
   "name": "superset-env",
+  "secretSuffix": "superset-settings",
   "description": "Environment variables and basic settings",
   "properties": [
     {
