@@ -202,8 +202,7 @@ class CommandServiceGitOpsDeployTest {
         request.setValues(values);
         // An uploaded ingress certificate: the plan stores it in a Secret and points the chart at it.
         request.setIngressTlsUpload(new LinkedHashMap<>(Map.of("secretName", rel + "-ingress-tls",
-                "certPem", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
-                "keyPem", "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----")));
+                "certPem", UPLOADED[0], "keyPem", UPLOADED[1])));
         HelmDeployRequest.GitOptions git = new HelmDeployRequest.GitOptions();
         git.setRepoUrl(repoUrl);
         git.setBaseBranch("main");
@@ -1255,6 +1254,17 @@ class CommandServiceGitOpsDeployTest {
     // ------------------------------------------------------------------------------------------------ Git credentials
 
     private static final String TOKEN = "glpat-Token-Of-The-Deploy-77";
+    // Real PEM: a deploy uploading an ingress certificate that does not read as PEM is refused before it is planned.
+    private static final String[] UPLOADED = uploadedPair();
+
+    private static String[] uploadedPair() {
+        try {
+            return CaRegistryServiceTest.issuingCa("trino.apps.example.com");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static final String SSH_KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAKEY\n"
             + "-----END OPENSSH PRIVATE KEY-----\n";
 

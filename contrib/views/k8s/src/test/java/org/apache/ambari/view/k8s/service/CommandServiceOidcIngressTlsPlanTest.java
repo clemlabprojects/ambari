@@ -112,4 +112,22 @@ class CommandServiceOidcIngressTlsPlanTest {
         assertFalse(CommandService.ingressTlsOverridden(java.util.Map.of()));
     }
 
+    /**
+     * A certificate pasted where its line breaks were lost (a single-line field) reads as no certificate at all: the
+     * deploy is refused before its Secret is written, rather than the Ingress serving its default certificate.
+     */
+    @Test
+    void anUploadedCertificateIsRefusedUnlessItReadsAsPem() throws Exception {
+        String[] company = CaRegistryServiceTest.issuingCa("trino.example.com");
+        String cert = company[0];
+        String key = company[1];
+
+        assertNull(CommandService.uploadedIngressTlsProblem(cert, key));
+        assertNull(CommandService.uploadedIngressTlsProblem(cert.replace("\n", "\r\n"), key.replace("\n", "\r\n")),
+                "a file saved on Windows");
+        assertNotNull(CommandService.uploadedIngressTlsProblem(cert.replace("\n", " "), key));
+        assertNotNull(CommandService.uploadedIngressTlsProblem(cert, key.replace("\n", " ")));
+        assertNotNull(CommandService.uploadedIngressTlsProblem(cert.substring(0, cert.length() / 2) + "\n-----END CERTIFICATE-----\n", key));
+        assertNotNull(CommandService.uploadedIngressTlsProblem(cert, cert), "a certificate pasted as the key");
+    }
 }

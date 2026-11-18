@@ -321,6 +321,9 @@ const DynamicFormField: React.FC<{ field: FormField; upgradeMode?: boolean }> = 
           <TrinoCatalogSelect disabled={disabledProp} />
         </Form.Item>
       );
+    // A pasted file (a PEM certificate and its key): a single-line input would drop its line breaks, and a PEM block
+    // without them cannot be read.
+    case 'content':
     case 'textarea':
       // Multi-line free text. Used where the operator supplies a block the backend parses rather
       // than a single scalar (e.g. extra Trino catalogs as plain .properties sections), so the

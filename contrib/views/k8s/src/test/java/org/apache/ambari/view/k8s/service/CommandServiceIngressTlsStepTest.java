@@ -72,8 +72,20 @@ class CommandServiceIngressTlsStepTest {
     private static final String REL = "trino";
     private static final String SECRET = REL + "-ingress-tls";
     private static final String HOST = "trino.apps.example.org";
-    private static final String CORPORATE_CERT = "-----BEGIN CERTIFICATE-----\nMIIBcorporate\n-----END CERTIFICATE-----\n";
-    private static final String CORPORATE_KEY = "-----BEGIN PRIVATE KEY-----\nMIIEcorporate\n-----END PRIVATE KEY-----\n";
+    // Real PEM: a deploy uploading a certificate that does not read as PEM is refused before anything else.
+    private static final String[] CORPORATE = pair("corporate.example.com");
+    private static final String CORPORATE_CERT = CORPORATE[0];
+    private static final String[] OTHER = pair("other.example.com");
+    private static final String[] RENEWED = pair("renewed.example.com");
+    private static final String CORPORATE_KEY = CORPORATE[1];
+
+    private static String[] pair(String cn) {
+        try {
+            return CaRegistryServiceTest.issuingCa(cn);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
 
     private final Gson gson = new Gson();
     private InMemoryDataStore dataStore;
@@ -391,8 +403,7 @@ class CommandServiceIngressTlsStepTest {
                 .withAnnotations(Map.of()).endMetadata().build());
         HelmDeployRequest request = deploy();
         request.setIngressTlsUpload(new LinkedHashMap<>(Map.of("secretName", SECRET,
-                "certPem", "-----BEGIN CERTIFICATE-----\nMIIBother\n-----END CERTIFICATE-----",
-                "keyPem", "-----BEGIN PRIVATE KEY-----\nMIIEother\n-----END PRIVATE KEY-----")));
+                "certPem", OTHER[0], "keyPem", OTHER[1])));
 
         IllegalStateException refused = assertThrows(IllegalStateException.class,
                 () -> service.checkIngressTlsSecretsReplaceable(request));
@@ -428,8 +439,7 @@ class CommandServiceIngressTlsStepTest {
         // A renewed corporate certificate uploaded over it is asked about the same way.
         HelmDeployRequest renewed = deploy();
         renewed.setIngressTlsUpload(new LinkedHashMap<>(Map.of(
-                "certPem", "-----BEGIN CERTIFICATE-----\nMIIBrenewed\n-----END CERTIFICATE-----",
-                "keyPem", "-----BEGIN PRIVATE KEY-----\nMIIErenewed\n-----END PRIVATE KEY-----")));
+                "certPem", RENEWED[0], "keyPem", RENEWED[1])));
         assertThrows(IngressTlsSecretGuard.ReplacementNotConfirmedException.class,
                 () -> service.checkIngressTlsSecretsReplaceable(renewed));
         renewed.setReplaceExistingTls(true);

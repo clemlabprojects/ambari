@@ -6026,6 +6026,10 @@ public class CommandService {
             String certPem = String.valueOf(upload.getOrDefault("certPem", ""));
             String keyPem = String.valueOf(upload.getOrDefault("keyPem", ""));
             if (!certPem.isBlank() && !keyPem.isBlank()) {
+                String unreadable = uploadedIngressTlsProblem(certPem, keyPem);
+                if (unreadable != null) {
+                    throw new IllegalArgumentException(unreadable);
+                }
                 String secretName = ingressTlsSecretName(upload, request);
                 var existing = kubernetesService.getSecret(namespace, secretName);
                 if (!holdsTlsPair(existing, certPem, keyPem)) {
@@ -6040,6 +6044,39 @@ public class CommandService {
             IngressTlsSecretGuard.checkReplaceable(kubernetesService.getSecret(namespace, secretName), namespace,
                     secretName, request.isReplaceExistingTls());
         }
+    }
+
+    /** A PEM block's first line: the ingress controller reads nothing from a block whose header has no line break. */
+    private static final java.util.regex.Pattern PEM_HEADER_LINE =
+            java.util.regex.Pattern.compile("-----BEGIN [A-Z0-9 ]+-----\\r?\\n");
+
+    /**
+     * Why an uploaded ingress certificate and key cannot serve the Ingress, or {@code null}: the certificate must be PEM
+     * X.509 (the leaf, then its chain) and the key a PEM private key, each with its line breaks — a single-line field or
+     * a copy through a tool that joins lines turns them into text no ingress controller reads, and the Ingress would
+     * silently serve its default certificate.
+     */
+    static String uploadedIngressTlsProblem(String certPem, String keyPem) {
+        if (!PEM_HEADER_LINE.matcher(certPem).find()) {
+            return "The uploaded Ingress certificate is not PEM with its line breaks: paste the certificate file as it is "
+                    + "(-----BEGIN CERTIFICATE----- on its own line, the leaf first, then its chain).";
+        }
+        try {
+            var certificates = java.security.cert.CertificateFactory.getInstance("X.509")
+                    .generateCertificates(new java.io.ByteArrayInputStream(
+                            certPem.getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+            if (certificates.isEmpty()) {
+                return "The uploaded Ingress certificate holds no certificate: paste the PEM certificate file, the leaf first.";
+            }
+        } catch (java.security.cert.CertificateException e) {
+            return "The uploaded Ingress certificate cannot be read as X.509 PEM (" + e.getMessage() + "): paste the "
+                    + "certificate file as it is, the leaf first, then its chain.";
+        }
+        if (!keyPem.contains("PRIVATE KEY-----") || !PEM_HEADER_LINE.matcher(keyPem).find()) {
+            return "The uploaded Ingress private key is not a PEM private key with its line breaks: paste the key file "
+                    + "as it is (-----BEGIN PRIVATE KEY----- on its own line).";
+        }
+        return null;
     }
 
     /** Whether the Secret already holds exactly this certificate and key (as KubernetesService writes them). */
