@@ -243,7 +243,8 @@
     <value>
 # Sourced before running dbt. Written by Ambari; edit through the service configuration.
 export DBT_HOME={{dbt_home}}
-export DBT_PROFILES_DIR={{dbt_conf_dir}}
+# A profile directory the user already chose is kept; this one is only the default.
+export DBT_PROFILES_DIR=${DBT_PROFILES_DIR:-{{dbt_conf_dir}}}
 export PATH={{dbt_home}}/bin:$PATH
     </value>
     <value-attributes>
