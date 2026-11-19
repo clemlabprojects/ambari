@@ -26,6 +26,6 @@ describe('SUPERSET service.json — Row Limit', () => {
   });
 
   it('deploys a chart that applies it', () => {
-    expect(def.version).toBe('0.12.56');
+    expect(def.version).toBe('0.12.57');
   });
 });
