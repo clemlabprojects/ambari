@@ -140,7 +140,7 @@ def knox():
          mode=0o600,
          group=params.knox_group,
          owner=params.knox_user,
-         content=InlineTemplate(params.admin_topology_template)
+         content=InlineTemplate(params.topology_template)
     )
 
     if params.admin_topology_template:
