@@ -65,6 +65,18 @@
                     &lt;enabled&gt;true&lt;/enabled&gt;
                 &lt;/provider&gt;
 
+                {% if dfs_ha_enabled %}
+                &lt;provider&gt;
+                    &lt;role&gt;ha&lt;/role&gt;
+                    &lt;name&gt;HaProvider&lt;/name&gt;
+                    &lt;enabled&gt;true&lt;/enabled&gt;
+                    &lt;param&gt;
+                        &lt;name&gt;WEBHDFS&lt;/name&gt;
+                        &lt;value&gt;maxFailoverAttempts=3;failoverSleep=1000;maxRetryAttempts=3;retrySleep=1000;enabled=true&lt;/value&gt;
+                    &lt;/param&gt;
+                &lt;/provider&gt;
+                {% endif %}
+
                 &lt;provider&gt;
                     &lt;role&gt;authorization&lt;/role&gt;
                     &lt;name&gt;AclsAuthz&lt;/name&gt;
