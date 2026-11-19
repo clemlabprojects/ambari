@@ -95,12 +95,12 @@
 
             &lt;service&gt;
                 &lt;role&gt;OOZIE&lt;/role&gt;
-                &lt;url&gt;http://{{oozie_server_host}}:{{oozie_server_port}}/oozie&lt;/url&gt;
+                &lt;url&gt;{{oozie_scheme}}://{{oozie_server_host}}:{{oozie_server_port}}/oozie&lt;/url&gt;
             &lt;/service&gt;
 
             &lt;service&gt;
                 &lt;role&gt;OOZIEUI&lt;/role&gt;
-                &lt;url&gt;http://{{oozie_server_host}}:{{oozie_server_port}}/oozie/&lt;/url&gt;
+                &lt;url&gt;{{oozie_scheme}}://{{oozie_server_host}}:{{oozie_server_port}}/oozie/&lt;/url&gt;
             &lt;/service&gt;
 
 
@@ -111,12 +111,12 @@
 
             &lt;service&gt;
                 &lt;role&gt;HIVE&lt;/role&gt;
-                &lt;url&gt;http://{{hive_server_host}}:{{hive_http_port}}/{{hive_http_path}}&lt;/url&gt;
+                &lt;url&gt;{{hive_scheme}}://{{hive_server_host}}:{{hive_http_port}}/{{hive_http_path}}&lt;/url&gt;
             &lt;/service&gt;
 
             &lt;service&gt;
                 &lt;role&gt;RESOURCEMANAGER&lt;/role&gt;
-                &lt;url&gt;http://{{rm_host}}:{{rm_port}}/ws&lt;/url&gt;
+                &lt;url&gt;{{yarn_scheme}}://{{rm_host}}:{{rm_port}}/ws&lt;/url&gt;
             &lt;/service&gt;
 
             &lt;service&gt;

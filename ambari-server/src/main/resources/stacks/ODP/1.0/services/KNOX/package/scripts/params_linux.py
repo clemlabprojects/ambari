@@ -180,6 +180,14 @@ if dfs_http_policy  !=  None :
    hdfs_port = str(namenode_http_port)  if not hdfs_https_on else str(namenode_https_port)
    namenode_http_port = hdfs_port
 
+if dfs_ha_enabled and hdfs_https_on:
+    # the NameNodes only listen on their HTTPS addresses
+    for nn_id in dfs_ha_namemodes_ids_list:
+        nn_https_address = default(format('/configurations/hdfs-site/dfs.namenode.https-address.{dfs_ha_nameservices}.{nn_id}'), None)
+        if nn_https_address:
+            nn_host_parts = nn_https_address.split(':')
+            namenode_port_map[nn_host_parts[0]] = nn_host_parts[1]
+
 def buildUrlElement(protocol, hdfs_host, port, servicePath) :
   openTag = "<url>"
   closeTag = "</url>"
@@ -194,9 +202,9 @@ namenode_host_keys = namenode_port_map.keys();
 webhdfs_service_urls = ""
 if len(namenode_host_keys) > 0:
     for host in namenode_host_keys:
-      webhdfs_service_urls += buildUrlElement("http", host, namenode_port_map[host], "/webhdfs")
+      webhdfs_service_urls += buildUrlElement(hdfs_scheme, host, namenode_port_map[host], "/webhdfs")
 elif has_namenode:
-  webhdfs_service_urls = buildUrlElement("http", namenode_hosts[0], namenode_http_port, "/webhdfs")
+  webhdfs_service_urls = buildUrlElement(hdfs_scheme, namenode_hosts[0], namenode_http_port, "/webhdfs")
 
 yarn_http_policy = default('/configurations/yarn-site/yarn.http.policy', None )
 yarn_https_on = False
@@ -222,6 +230,9 @@ if has_rm:
   if 'yarn.resourcemanager.webapp.address' in config['configurations']['yarn-site']:
     rm_port = get_port_from_url(config['configurations']['yarn-site']['yarn.resourcemanager.webapp.address'])
 
+  if yarn_https_on and 'yarn.resourcemanager.webapp.https.address' in config['configurations']['yarn-site']:
+    rm_port = get_port_from_url(config['configurations']['yarn-site']['yarn.resourcemanager.webapp.https.address'])
+
 hive_http_port = default('/configurations/hive-site/hive.server2.thrift.http.port', "10001")
 hive_http_path = default('/configurations/hive-site/hive.server2.thrift.http.path', "cliservice")
 hive_server_hosts = default("/clusterHostInfo/hive_server_hosts", None)
@@ -237,7 +248,7 @@ if type(webhcat_server_hosts) is list:
 else:
   webhcat_server_host = webhcat_server_hosts
 
-hive_scheme = 'http'
+hive_scheme = 'https' if str(default('/configurations/hive-site/hive.server2.use.SSL', 'false')).lower() == 'true' else 'http'
 webhcat_scheme = 'http'
 
 hbase_master_scheme = 'http'
