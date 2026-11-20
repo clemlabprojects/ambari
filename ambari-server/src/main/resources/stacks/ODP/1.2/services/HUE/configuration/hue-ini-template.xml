@@ -172,6 +172,7 @@ server_port={{hue_impala_server_port}}
 impersonation_enabled={{hue_impala_impersonation_enabled}}
   {% if kerberos_enabled %}
 impala_principal={{hue_impala_principal}}
+use_sasl=true
   {% endif %}
   {% if hue_impala_ssl_enabled %}
   [[ssl]]
