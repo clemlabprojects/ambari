@@ -300,6 +300,15 @@ class HueValidator(service_advisor.ServiceAdvisor):
       if not valid:
         items.append({"config-name": "hue_db_options",
                       "item": self.getErrorItem("Must be a JSON object, for instance {\"sslmode\": \"verify-full\"}.")})
+    # Hue takes a single WebHDFS URL: without HttpFS it is the first NameNode, which fails while that one is standby
+    hdfs_site = services["configurations"].get("hdfs-site", {}).get("properties", {})
+    nameservice = (hdfs_site.get("dfs.internal.nameservices") or hdfs_site.get("dfs.nameservices") or "").split(",")[0]
+    if nameservice and len(hdfs_site.get("dfs.ha.namenodes." + nameservice, "").split(",")) > 1 \
+        and not self.getComponentHostNames(services, "HDFS", "HTTPFS_GATEWAY"):
+      items.append({"config-name": "hue_app_blacklist",
+                    "item": self.getWarnItem("NameNode HA is enabled and no HttpFS Gateway is installed: the Hue file browser "
+                                             "uses the first NameNode and fails while it is standby. Add the HDFS HttpFS "
+                                             "Gateway component, Hue then uses it.")})
     return self.toConfigurationValidationProblems(items, "hue-ini-conf")
 
 
