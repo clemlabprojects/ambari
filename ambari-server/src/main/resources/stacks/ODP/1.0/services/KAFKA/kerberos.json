@@ -11,8 +11,7 @@
       "configurations": [
         {
           "kafka-broker": {
-              "authorizer.class.name": "kafka.security.auth.SimpleAclAuthorizer",
-              "principal.to.local.class":"kafka.security.auth.KerberosPrincipalToLocal",
+              "authorizer.class.name": "kafka.security.authorizer.AclAuthorizer",
               "super.users": "user:${kafka-env/kafka_user}",
               "security.inter.broker.protocol": "SASL_PLAINTEXT",
               "zookeeper.set.acl": "true"

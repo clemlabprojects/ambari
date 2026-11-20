@@ -226,7 +226,9 @@ class KafkaRecommender(service_advisor.ServiceAdvisor):
 
         putKafkaBrokerProperty("super.users", kafka_super_users)
 
-      putKafkaBrokerProperty("principal.to.local.class", "kafka.security.auth.KerberosPrincipalToLocal")
+      # kafka.security.auth.KerberosPrincipalToLocal no longer exists: Kafka maps principals with
+      # sasl.kerberos.principal.to.local.rules
+      putKafkaBrokerAttributes('principal.to.local.class', 'delete', 'true')
       putKafkaBrokerProperty("zookeeper.set.acl", "true")
 
     else:  # not security_enabled
@@ -264,7 +266,8 @@ class KafkaRecommender(service_advisor.ServiceAdvisor):
       # enabled or not.
       putKafkaBrokerProperty("authorizer.class.name", 'org.apache.ranger.authorization.kafka.authorizer.RangerKafkaAuthorizer')
     elif security_enabled:
-      putKafkaBrokerProperty("authorizer.class.name", 'kafka.security.auth.SimpleAclAuthorizer')
+      # the ZooKeeper based ACL authorizer of Kafka 2.4+ (kafka.security.auth.SimpleAclAuthorizer was removed in Kafka 3.0)
+      putKafkaBrokerProperty("authorizer.class.name", 'kafka.security.authorizer.AclAuthorizer')
     else:
       putKafkaBrokerAttributes('authorizer.class.name', 'delete', 'true')
 
