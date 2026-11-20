@@ -44,7 +44,6 @@ from ambari_commons import OSConst, OSCheck
 from ambari_commons.os_family_impl import OsFamilyImpl
 
 import time
-import upgrade
 
 class HueGateway(Script):
   def install(self, env):
@@ -63,10 +62,6 @@ class HueGatewayDefault(HueGateway):
     import params
     env.set_params(params)
     stack_select.select_packages(params.version)
-
-    # seed the new Knox data directory with the keystores of yesteryear
-    if params.upgrade_direction == Direction.UPGRADE:
-      upgrade.seed_current_data_directory()
 
 
   def start(self, env, upgrade_type=None):
