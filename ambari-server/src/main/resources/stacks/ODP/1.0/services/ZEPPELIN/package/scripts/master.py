@@ -646,6 +646,16 @@ class Master(Script):
           del interpreter_settings[setting_key]
 
 
+      elif interpreter['group'] == 'spark' and interpreter['name'] == 'spark' and 'spark' not in exclude_interpreter_autoconfig_list:
+        if 'spark3-env' in params.config['configurations']:
+          # only fill what the user has not set
+          if not interpreter['properties'].get('SPARK_HOME', {}).get('value'):
+            self.storePropertyToInterpreter(interpreter, 'SPARK_HOME', 'string', format("{params.stack_root}/current/spark3-client/"))
+            if interpreter['properties'].get('spark.master', {}).get('value') in (None, '', 'local[*]'):
+              self.storePropertyToInterpreter(interpreter, 'spark.master', 'string', "yarn")
+              if not interpreter['properties'].get('spark.submit.deployMode', {}).get('value'):
+                self.storePropertyToInterpreter(interpreter, 'spark.submit.deployMode', 'string', "client")
+
       elif interpreter['group'] == 'spark' and interpreter['name'] == 'spark2' and 'spark2' not in exclude_interpreter_autoconfig_list:
         if 'spark2-env' in params.config['configurations']:
           self.storePropertyToInterpreter(interpreter, 'master', 'string', "yarn-client")
