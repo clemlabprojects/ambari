@@ -117,6 +117,24 @@
           <message>Before continuing, please backup Ranger KMS database on the following host(s): {{hosts.all}}.</message>
         </task>
       </execute-stage>
+      <execute-stage service="POLARIS" component="POLARIS_SERVER" title="Pre Upgrade Polaris Backup">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the Polaris database (the catalog metadata store) used by the Polaris Server located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Pre Upgrade Amoro Backup">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the Amoro database used by the Amoro Management Service located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="HUE" component="HUE_SERVER" title="Pre Upgrade Hue Backup">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the Hue database used by the Hue Server located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
       <execute-stage service="ZEPPELIN" component="ZEPPELIN_MASTER" title="Pre Upgrade Zeppelin notebooks Backup">
         <task xsi:type="manual">
           <message>Before continuing, please backup Zeppelin notebooks directory on the following host(s): {{hosts.all}}.</message>

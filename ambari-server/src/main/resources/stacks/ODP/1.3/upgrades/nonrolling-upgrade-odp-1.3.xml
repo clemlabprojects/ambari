@@ -245,6 +245,24 @@
         </task>
       </execute-stage>
 
+      <execute-stage service="POLARIS" component="POLARIS_SERVER" title="Backup Polaris Database">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the Polaris database (the catalog metadata store) used by the Polaris Server located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Backup Amoro Database">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the Amoro database used by the Amoro Management Service located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="HUE" component="HUE_SERVER" title="Backup Hue Database">
+        <task xsi:type="manual">
+          <message>Before continuing, please backup the Hue database used by the Hue Server located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
       <execute-stage service="ZEPPELIN" component="ZEPPELIN_MASTER" title="Pre Upgrade Zeppelin notebooks Backup">
         <task xsi:type="manual">
           <message>Before continuing, please backup Zeppelin notebooks directory on the following host(s): {{hosts.all}}.</message>
@@ -339,6 +357,24 @@
       <execute-stage service="RANGER_KMS" component="RANGER_KMS_SERVER" title="Restore Ranger KMS Database">
         <task xsi:type="manual">
           <message>Before continuing, please restore Ranger KMS database</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="POLARIS" component="POLARIS_SERVER" title="Restore Polaris Database">
+        <task xsi:type="manual">
+          <message>Before continuing, please restore the Polaris database (the catalog metadata store) used by the Polaris Server located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="AMORO" component="AMORO_SERVER" title="Restore Amoro Database">
+        <task xsi:type="manual">
+          <message>Before continuing, please restore the Amoro database used by the Amoro Management Service located on the following host(s): {{hosts.all}}.</message>
+        </task>
+      </execute-stage>
+
+      <execute-stage service="HUE" component="HUE_SERVER" title="Restore Hue Database">
+        <task xsi:type="manual">
+          <message>Before continuing, please restore the Hue database used by the Hue Server located on the following host(s): {{hosts.all}}.</message>
         </task>
       </execute-stage>
 
