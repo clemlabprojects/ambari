@@ -232,6 +232,14 @@ class OozieRecommender(service_advisor.ServiceAdvisor):
             services["forced-configurations"].append({"type" : "oozie-site", "name" : "oozie.service.ProxyUserService.proxyuser.{0}.hosts".format(hueUser)})
             services["forced-configurations"].append({"type" : "oozie-site", "name" : "oozie.service.ProxyUserService.proxyuser.{0}.groups".format(hueUser)})
 
+    # Knox submits Oozie requests on behalf of the authenticated user
+    knoxHosts = self.getComponentHostNames(services, "KNOX", "KNOX_GATEWAY")
+    if knoxHosts and "knox-env" in services["configurations"] and "knox_user" in services["configurations"]["knox-env"]["properties"]:
+      knoxUser = services["configurations"]["knox-env"]["properties"]["knox_user"]
+      if knoxUser:
+        putOozieSiteProperty("oozie.service.ProxyUserService.proxyuser.{0}.groups".format(knoxUser), "*")
+        putOozieSiteProperty("oozie.service.ProxyUserService.proxyuser.{0}.hosts".format(knoxUser), ",".join(sorted(knoxHosts)))
+
 
     ## added in 2.3
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
