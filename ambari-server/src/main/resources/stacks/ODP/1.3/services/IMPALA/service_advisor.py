@@ -152,6 +152,32 @@ class Impala030ServiceAdvisor(service_advisor.ServiceAdvisor):
         return "{0}g".format(recommended_gb)
 
 
+    def getServiceConfigurationsValidationItems(self, configurations, recommendedDefaults, services, hosts):
+        """
+        The load balancer of the Impala daemons is not set up by Ambari: the operator enables it here. On a Kerberos
+        cluster the daemons then log in as impala/<load balancer host>, a principal which only exists once the
+        keytabs have been regenerated.
+        """
+        items = []
+        all_configurations = services.get("configurations", {})
+        impala_env = all_configurations.get("impala-env", {}).get("properties", {})
+        cluster_env = all_configurations.get("cluster-env", {}).get("properties", {})
+
+        if str(impala_env.get("enable_load_balancer", "false")).lower() == "true":
+            load_balancer_host = str(impala_env.get("impala_load_balancer_host", "") or "").strip()
+            if not load_balancer_host or load_balancer_host == "_HOST":
+                items.append({"config-name": "impala_load_balancer_host",
+                              "item": self.getErrorItem("Set the host name clients use to reach the Impala load balancer.")})
+            elif str(cluster_env.get("security_enabled", "false")).lower() == "true":
+                items.append({"config-name": "enable_load_balancer",
+                              "item": self.getWarnItem(
+                                  "The Impala daemons will use the principal impala/{0}. Ambari does not create it when this "
+                                  "setting is saved: run Kerberos > Regenerate Keytabs before "
+                                  "restarting Impala, or the daemons do not start. The load balancer itself is not "
+                                  "installed by Ambari.".format(load_balancer_host))})
+
+        return self.toConfigurationValidationProblems(items, "impala-env")
+
     def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
         self.preserveExistingConfigTypeProperties(configurations, services, "core-site")
         putHDFSCoreProperty = self.putProperty(configurations, "core-site", services)
