@@ -265,7 +265,9 @@ class Spark2Recommender(service_advisor.ServiceAdvisor):
 
       if zeppelin_site and 'zeppelin.server.kerberos.principal' in zeppelin_site:
         zeppelin_principal = zeppelin_site['zeppelin.server.kerberos.principal']
-        zeppelin_user = zeppelin_principal.split('@')[0] if zeppelin_principal else None
+        # Livy compares the short name of the caller, so the instance (_HOST) part must go too
+        zeppelin_principal_name = zeppelin_principal.split('@')[0] if zeppelin_principal else None
+        zeppelin_user = zeppelin_principal_name.split('/')[0] if zeppelin_principal_name else None
 
         if zeppelin_user:
           livy2_conf = self.getServicesSiteProperties(services, 'spark2-livy2-conf')
@@ -281,8 +283,10 @@ class Spark2Recommender(service_advisor.ServiceAdvisor):
             else:
               _superusers = []
 
-            if zeppelin_user not in _superusers:
-              _superusers.append(zeppelin_user)
+            if zeppelin_user not in _superusers or zeppelin_principal_name in _superusers and zeppelin_principal_name != zeppelin_user:
+              _superusers = [x for x in _superusers if x != zeppelin_principal_name or x == zeppelin_user]
+              if zeppelin_user not in _superusers:
+                _superusers.append(zeppelin_user)
 
               putLivy2ConfProperty = self.putProperty(configurations, 'spark2-livy2-conf', services)
               putLivy2ConfProperty('livy.superusers', ','.join(_superusers))
