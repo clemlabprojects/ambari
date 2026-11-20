@@ -1511,7 +1511,11 @@ class DefaultStackAdvisor(StackAdvisor):
   def validateMinMax(self, items, recommendedDefaults, configurations):
 
     # required for casting to the proper numeric type before comparison
+    # a value may carry the unit suffix of its property (for example 4096m): compare the number alone
     def convertToNumber(number):
+      match = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*[a-zA-Z%]*\s*$", str(number))
+      if match:
+        number = match.group(1)
       try:
         return int(number)
       except ValueError:
@@ -1522,6 +1526,11 @@ class DefaultStackAdvisor(StackAdvisor):
       if configName in recommendedDefaults and "property_attributes" in recommendedDefaults[configName]:
         for propertyName in recommendedDefaults[configName]["property_attributes"]:
           if propertyName in configurations[configName]["properties"]:
+            try:
+              convertToNumber(configurations[configName]["properties"][propertyName])
+            except (TypeError, ValueError):
+              # not a number (empty value, placeholder): nothing to compare
+              continue
             if "maximum" in recommendedDefaults[configName]["property_attributes"][propertyName] and \
                 propertyName in recommendedDefaults[configName]["properties"]:
               userValue = convertToNumber(configurations[configName]["properties"][propertyName])
