@@ -217,10 +217,17 @@
             <type>hue-ini-template</type>
             <replace key="content" find="hadoop_bin=/usr/odp/current/hadoop-client/hadoop/bin/hadoop" replace-with="hadoop_bin=/usr/odp/current/hadoop-client/bin/hadoop"/>
           </definition>
+          <definition xsi:type="configure" id="odp_1_3_2_0_hue_impala_use_sasl" summary="Render use_sasl for the Hue Impala editor">
+            <type>hue-ini-template</type>
+            <!-- idempotent: the lookahead skips a template that already sets use_sasl. Runs before the section is
+                 added, so an existing section ends up identical to the block below and is not added twice -->
+            <regex-replace key="content" find="(impala_principal=\{\{hue_impala_principal\}\}\r?\n)(?!use_sasl)"
+                           replace-with="impala_principal={{hue_impala_principal}}&#10;use_sasl=true&#10;"/>
+          </definition>
           <definition xsi:type="configure" id="odp_1_3_2_0_hue_impala_section" summary="Add the Hue Impala section">
             <type>hue-ini-template</type>
             <!-- idempotent: skipped when the template already contains this block -->
-            <insert key="content" value="{% if has_impala %}&#10;[impala]&#10;server_host={{hue_impala_server_host}}&#10;server_port={{hue_impala_server_port}}&#10;impersonation_enabled={{hue_impala_impersonation_enabled}}&#10;  {% if kerberos_enabled %}&#10;impala_principal={{hue_impala_principal}}&#10;  {% endif %}&#10;  {% if hue_impala_ssl_enabled %}&#10;  [[ssl]]&#10;  enabled=true&#10;  cacerts={{hue_impala_ssl_cacerts}}&#10;  validate={{'true' if hue_impala_ssl_cacerts else 'false'}}&#10;  {% endif %}&#10;{% endif %}"
+            <insert key="content" value="{% if has_impala %}&#10;[impala]&#10;server_host={{hue_impala_server_host}}&#10;server_port={{hue_impala_server_port}}&#10;impersonation_enabled={{hue_impala_impersonation_enabled}}&#10;  {% if kerberos_enabled %}&#10;impala_principal={{hue_impala_principal}}&#10;use_sasl=true&#10;  {% endif %}&#10;  {% if hue_impala_ssl_enabled %}&#10;  [[ssl]]&#10;  enabled=true&#10;  cacerts={{hue_impala_ssl_cacerts}}&#10;  validate={{'true' if hue_impala_ssl_cacerts else 'false'}}&#10;  {% endif %}&#10;{% endif %}"
                     insert-type="append" newline-before="true" newline-after="true"/>
           </definition>
         </changes>

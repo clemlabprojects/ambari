@@ -471,6 +471,10 @@
         <task xsi:type="configure" id="odp_1_3_2_0_hue_yarn_hadoop_bin"/>
       </execute-stage>
 
+      <execute-stage service="HUE" component="HUE_SERVER" title="Render use_sasl for the Hue Impala editor">
+        <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_use_sasl"/>
+      </execute-stage>
+
       <execute-stage service="HUE" component="HUE_SERVER" title="Add the Hue Impala section">
         <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_section"/>
       </execute-stage>

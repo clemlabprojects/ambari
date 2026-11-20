@@ -1075,6 +1075,7 @@
         <pre-upgrade>
           <task xsi:type="configure" id="odp_1_3_2_0_hue_hive_use_sasl"/>
           <task xsi:type="configure" id="odp_1_3_2_0_hue_yarn_hadoop_bin"/>
+          <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_use_sasl"/>
           <task xsi:type="configure" id="odp_1_3_2_0_hue_impala_section"/>
         </pre-upgrade>
         <pre-downgrade/>
