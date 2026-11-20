@@ -36,6 +36,9 @@ import org.apache.ambari.server.orm.entities.KerberosPrincipalEntity;
 import org.apache.ambari.server.security.SecurePasswordHelper;
 import org.apache.ambari.server.serveraction.ActionLog;
 import org.apache.ambari.server.serveraction.kerberos.stageutils.ResolvedKerberosPrincipal;
+import org.apache.ambari.server.state.Cluster;
+import org.apache.ambari.server.state.ServiceComponent;
+import org.apache.ambari.server.state.ServiceComponentHost;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -199,6 +202,11 @@ public class CreatePrincipalsServerAction extends KerberosServerAction {
               }
               principalEntity.setCachedKeytabPath(null);
               kerberosPrincipalDAO.merge(principalEntity);
+
+              if (kerberosPrincipalEntity != null) {
+                // an existing principal got a new key: what runs with the previous one has to be restarted
+                requireRestartOfComponentsUsing(resolvedPrincipal.getPrincipal());
+              }
             }
           }
         } finally {
@@ -222,6 +230,45 @@ public class CreatePrincipalsServerAction extends KerberosServerAction {
    * @param actionLog                the logger (may be null if no logging is desired)
    * @return a CreatePrincipalResult containing the generated password and key number value
    */
+  /**
+   * Flags the components using a principal as needing a restart (the indicator shown for stale configurations),
+   * on every host where a keytab file holds that principal. Client components have nothing to restart.
+   *
+   * @param principal the principal whose key changed
+   */
+  private void requireRestartOfComponentsUsing(String principal) {
+    try {
+      Cluster cluster = getClusters().getCluster(getClusterName());
+
+      for (KerberosKeytabPrincipalEntity kkpe : kerberosKeytabPrincipalDAO.findByPrincipal(principal)) {
+        String hostName = kkpe.getHostName();
+        if (hostName == null) {
+          continue;
+        }
+        for (Map.Entry<String, String> mapping : kkpe.getServiceMappingAsMultimap().entries()) {
+          try {
+            ServiceComponent component = cluster.getService(mapping.getKey()).getServiceComponent(mapping.getValue());
+            if (!component.isClientComponent()) {
+              ServiceComponentHost componentHost = component.getServiceComponentHost(hostName);
+              if (!componentHost.isRestartRequired()) {
+                componentHost.setRestartRequired(true);
+                String message = String.format("%s/%s on %s has to be restarted: the key of %s changed",
+                    mapping.getKey(), mapping.getValue(), hostName, principal);
+                LOG.info(message);
+                actionLog.writeStdOut(message);
+              }
+            }
+          } catch (AmbariException e) {
+            // not a component of the cluster (the Ambari server identities) or not on this host
+            LOG.debug("No restart flag for {}/{} on {}: {}", mapping.getKey(), mapping.getValue(), hostName, e.getMessage());
+          }
+        }
+      }
+    } catch (Exception e) {
+      LOG.warn("Could not flag the components using {} as needing a restart: {}", principal, e.getMessage());
+    }
+  }
+
   public CreatePrincipalResult createPrincipal(String principal, boolean isServicePrincipal,
                                                Map<String, String> kerberosConfiguration,
                                                KerberosOperationHandler kerberosOperationHandler,

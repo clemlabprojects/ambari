@@ -18,11 +18,14 @@
 
 package org.apache.ambari.server.serveraction.kerberos.stageutils;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -142,7 +145,8 @@ public class KerberosKeytabController {
       filter.setPrincipals(identityFilter);
     }
 
-    Set<ResolvedKerberosPrincipal> filteredPrincipals = fromPrincipalEntities(kerberosKeytabPrincipalDAO.findByFilters(filters), false);
+    Set<ResolvedKerberosPrincipal> filteredPrincipals = fromPrincipalEntities(
+        completeSharedKeytabs(kerberosKeytabPrincipalDAO.findByFilters(filters)), false);
     HashMap<String, ResolvedKerberosKeytab> resultMap = new HashMap<>();
     for (ResolvedKerberosPrincipal principal : filteredPrincipals) {
       if (!resultMap.containsKey(principal.getKeytabPath())) {
@@ -152,6 +156,66 @@ public class KerberosKeytabController {
       keytab.addPrincipal(principal);
     }
     return Sets.newHashSet(resultMap.values());
+  }
+
+  /**
+   * A keytab file is always built and sent as a whole: when one of its principals is selected on a host, the other
+   * principals recorded for that file on that host are selected too, and so is every other keytab file of each
+   * selected principal on that host. Otherwise an operation limited to some identities (a new component, a host,
+   * a principal) rewrites a keytab file shared by several principals with only the principals it handles.
+   * <p>
+   * The principals added here are not part of the identities of the operation: their key is taken from the keytab
+   * cache, and they only get a new key when that cache is gone, like any other principal.
+   *
+   * @param selected the keytab/principal records matching the filters of the operation
+   * @return the records to process
+   */
+  private Collection<KerberosKeytabPrincipalEntity> completeSharedKeytabs(Collection<KerberosKeytabPrincipalEntity> selected) {
+    if (selected == null || selected.isEmpty()) {
+      return selected;
+    }
+
+    Map<Long, KerberosKeytabPrincipalEntity> completed = new LinkedHashMap<>();
+    Deque<KerberosKeytabPrincipalEntity> toVisit = new ArrayDeque<>();
+    List<KerberosKeytabPrincipalEntity> withoutId = new ArrayList<>();
+    for (KerberosKeytabPrincipalEntity entity : selected) {
+      if (entity.getKkpId() == null) {
+        withoutId.add(entity);
+      } else if (completed.put(entity.getKkpId(), entity) == null) {
+        toVisit.add(entity);
+      }
+    }
+
+    Map<Long, List<KerberosKeytabPrincipalEntity>> recordsByHost = new HashMap<>();
+    while (!toVisit.isEmpty()) {
+      KerberosKeytabPrincipalEntity entity = toVisit.poll();
+      Long hostId = entity.getHostId();
+      if (hostId == null || entity.getKeytabPath() == null || entity.getPrincipalName() == null) {
+        // not tied to a cluster host (the Ambari server identities)
+        continue;
+      }
+
+      List<KerberosKeytabPrincipalEntity> hostRecords = recordsByHost.get(hostId);
+      if (hostRecords == null) {
+        hostRecords = kerberosKeytabPrincipalDAO.findByHost(hostId);
+        recordsByHost.put(hostId, hostRecords == null ? Collections.emptyList() : hostRecords);
+        hostRecords = recordsByHost.get(hostId);
+      }
+
+      for (KerberosKeytabPrincipalEntity other : hostRecords) {
+        if (other.getKkpId() == null || completed.containsKey(other.getKkpId())) {
+          continue;
+        }
+        if (entity.getKeytabPath().equals(other.getKeytabPath()) || entity.getPrincipalName().equals(other.getPrincipalName())) {
+          completed.put(other.getKkpId(), other);
+          toVisit.add(other);
+        }
+      }
+    }
+
+    List<KerberosKeytabPrincipalEntity> result = new ArrayList<>(completed.values());
+    result.addAll(withoutId);
+    return result;
   }
 
   public Set<ResolvedKerberosKeytab> getFilteredKeytabs(Collection<KerberosIdentityDescriptor> serviceIdentities, Set<String> hostFilter, Collection<String> identityFilters) {
