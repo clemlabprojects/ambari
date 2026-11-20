@@ -79,9 +79,6 @@ class Master(Script):
                         recursive_chmod=True
                         )
 
-    spark_deps_full_path = self.get_zeppelin_spark_dependencies()[0]
-    spark_dep_file_name = os.path.basename(spark_deps_full_path)
-
 
 
     params.HdfsResource(None, action="execute")
@@ -252,9 +249,8 @@ class Master(Script):
         and params.config['configurations']['zeppelin-site']['zeppelin.notebook.storage'] == 'org.apache.zeppelin.notebook.repo.FileSystemNotebookRepo':
       self.check_and_copy_notebook_in_hdfs(params)
 
-    zeppelin_spark_dependencies = self.get_zeppelin_spark_dependencies()
-    if zeppelin_spark_dependencies and os.path.exists(zeppelin_spark_dependencies[0]):
-      self.create_zeppelin_dir(params)
+    # Zeppelin 0.12 has no spark dependencies jar, the home directory is needed anyway (Spark staging directory)
+    self.create_zeppelin_dir(params)
 
     if params.conf_stored_in_hdfs:
       if not self.is_directory_exists_in_HDFS(self.get_zeppelin_conf_FS_directory(params), params.zeppelin_user):
