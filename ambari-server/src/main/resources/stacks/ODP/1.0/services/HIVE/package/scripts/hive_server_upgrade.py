@@ -27,6 +27,7 @@ from resource_management.core.exceptions import Fail
 from resource_management.core.logger import Logger
 from resource_management.core.resources.system import Execute
 from resource_management.libraries.functions import format
+from resource_management.libraries.functions import upgrade_summary
 from resource_management.libraries.functions import stack_select
 from resource_management.libraries.functions import StackFeature
 from resource_management.libraries.functions.stack_features import check_stack_feature
@@ -113,7 +114,9 @@ def _get_current_hiveserver_version():
 
   try:
     # When downgrading the source version should be the version we are downgrading from
-    source_version = params.version_for_stack_feature_checks
+    # the version of the HiveServer2 instances to remove from ZooKeeper is the one being replaced: during an
+    # upgrade the command version is the target, and deregistering it stops the instances already upgraded
+    source_version = upgrade_summary.get_source_version("HIVE", default_version=params.version_for_stack_feature_checks)
     if params.downgrade_from_version is not None:
       source_version = params.downgrade_from_version
 
