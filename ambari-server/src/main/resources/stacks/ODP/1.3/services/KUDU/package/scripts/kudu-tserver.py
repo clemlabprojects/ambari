@@ -29,12 +29,12 @@ class KuduTserver(Kudu):
     def configure(self, env):
         Kudu.configure(self, env)
 
-    def start(self, env):
+    def start(self, env, upgrade_type=None):
         self.configure(env)
         setup_ranger_kudu('kudu-tserver')
         self.start_kudu('tserver')
 
-    def stop(self, env):
+    def stop(self, env, upgrade_type=None):
         self.stop_kudu('tserver')
 
     def status(self, env):

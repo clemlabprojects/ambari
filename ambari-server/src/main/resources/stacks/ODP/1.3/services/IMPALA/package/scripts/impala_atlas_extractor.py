@@ -129,7 +129,7 @@ class ImpalaAtlasExtractor(Script):
             mode=0o755,
         )
 
-    def start(self, env):
+    def start(self, env, upgrade_type=None):
         import params
         env.set_params(params)
         self.configure(env)
@@ -159,7 +159,7 @@ class ImpalaAtlasExtractor(Script):
             logoutput=True,
         )
 
-    def stop(self, env):
+    def stop(self, env, upgrade_type=None):
         import params
         env.set_params(params)
         # SIGTERM to the bash launcher first; the loop traps and exits between

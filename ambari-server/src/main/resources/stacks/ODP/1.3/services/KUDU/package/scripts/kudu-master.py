@@ -29,12 +29,12 @@ class KuduMaster(Kudu):
     def configure(self, env):
         Kudu.configure(self, env)
 
-    def start(self, env):
+    def start(self, env, upgrade_type=None):
         self.configure(env)
         setup_ranger_kudu('kudu-master')
         self.start_kudu('master')
 
-    def stop(self, env):
+    def stop(self, env, upgrade_type=None):
         self.stop_kudu('master')
 
     def status(self, env):
