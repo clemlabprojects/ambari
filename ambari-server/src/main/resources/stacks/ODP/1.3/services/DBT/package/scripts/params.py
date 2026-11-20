@@ -25,6 +25,8 @@ config = Script.get_config()
 stack_root = Script.get_stack_root()
 stack_version_unformatted = str(config['clusterLevelParams']['stack_version'])
 stack_version_formatted = format_stack_version(stack_version_unformatted)
+# the version being installed or upgraded to; None outside an install or an upgrade
+version = default("/commandParams/version", None)
 
 # Where the packaged virtual environment lands. dbt is a command, not a daemon, so the whole
 # service is this directory plus the profile written next to it.
