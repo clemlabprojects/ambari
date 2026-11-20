@@ -116,6 +116,8 @@ if security_enabled:
 
 flink_conf_file = flink_conf + "/flink-conf.yaml"
 java_home = config['ambariLevelParams']['java_home']
+# the flink launcher otherwise picks the first JDK it finds on the host
+flink_client_properties.setdefault('env.java.home', java_home)
 
 hdfs_user = config['configurations']['hadoop-env']['hdfs_user']
 flink_user = config['configurations']['flink-env']['flink_user']
