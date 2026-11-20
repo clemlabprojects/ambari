@@ -169,6 +169,8 @@ def oozie_service(action = 'start', upgrade_type=None):
         params.HdfsResource(None, action="execute")
 
 
+    create_spark3_sharelib(kinit_if_needed)
+
     try:
       # start oozie
       Execute( start_cmd, environment=environment, user = params.oozie_user,
@@ -196,6 +198,31 @@ def oozie_service(action = 'start', upgrade_type=None):
       raise
 
     File(params.pid_file, action = "delete")
+
+def create_spark3_sharelib(kinit_if_needed):
+  """
+  The Oozie sharelib archive only carries Spark 2. When Spark 3 of the same stack version is installed on the
+  Oozie Server host, add a "spark3" directory to the newest sharelib in HDFS, so a Spark action can select it
+  with oozie.action.sharelib.for.spark=spark3. Done before Oozie starts, which is when it loads the sharelib.
+  """
+  import params
+
+  script = format(
+    "{kinit_if_needed} "
+    "SPARK3_HOME=$(dirname $(readlink -f {oozie_home}))/spark3 ; "
+    "[ -d $SPARK3_HOME/jars ] || exit 0 ; "
+    "LIB=$(hadoop --config {hadoop_conf_dir} fs -ls -d '{hdfs_share_dir}/lib/lib_*' 2>/dev/null | awk '{{print $NF}}' | sort | tail -1) ; "
+    "[ -n \"$LIB\" ] || exit 0 ; "
+    "hadoop --config {hadoop_conf_dir} fs -test -d $LIB/spark3 && exit 0 ; "
+    "hadoop --config {hadoop_conf_dir} fs -rm -r -f -skipTrash $LIB/spark3.tmp && "
+    "hadoop --config {hadoop_conf_dir} fs -mkdir $LIB/spark3.tmp && "
+    "hadoop --config {hadoop_conf_dir} fs -put $SPARK3_HOME/jars/*.jar $SPARK3_HOME/python/lib/*.zip $LIB/spark3.tmp/ && "
+    "hadoop --config {hadoop_conf_dir} fs -cp \"$LIB/spark/oozie-sharelib-spark-*.jar\" $LIB/spark3.tmp/ && "
+    "hadoop --config {hadoop_conf_dir} fs -mv $LIB/spark3.tmp $LIB/spark3")
+  try:
+    Execute(script, user=params.oozie_user, path=params.execute_path, logoutput=True)
+  except Exception as e:
+    Logger.warning("Could not create the Oozie spark3 sharelib: {0}".format(e))
 
 def copy_jdbc_connector(oozie_home):
   import params
