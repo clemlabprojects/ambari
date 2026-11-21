@@ -557,6 +557,36 @@
       </service>
     </group>
 
+    <!-- NiFi 2 to NiFi 2 (source 1.3.2.0 or later); from NiFi 1, NifiTwoUpgradeCheck requires an express upgrade -->
+    <group name="NIFI" title="NiFi">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="NIFI">
+        <component>NIFI_CA</component>
+        <component>NIFI_MASTER</component>
+      </service>
+    </group>
+
+    <group name="NIFI_REGISTRY" title="NiFi Registry">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="NIFI_REGISTRY">
+        <component>NIFI_REGISTRY_MASTER</component>
+      </service>
+    </group>
+
+    <group name="FLINK" title="Flink">
+      <skippable>true</skippable>
+      <supports-auto-skip-failure>false</supports-auto-skip-failure>
+      <service-check>false</service-check>
+      <service name="FLINK">
+        <component>FLINK_JOBHISTORYSERVER</component>
+        <component>FLINK_CLIENT</component>
+      </service>
+    </group>
+
     <group name="SERVICE_CHECK_3" title="All Service Checks" xsi:type="service-check">
       <direction>UPGRADE</direction>
       <skippable>true</skippable>
@@ -1419,6 +1449,40 @@
         </upgrade>
       </component>
       <component name="DRUID_OVERLORD">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="NIFI">
+      <component name="NIFI_CA">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="NIFI_MASTER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="NIFI_REGISTRY">
+      <component name="NIFI_REGISTRY_MASTER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+    </service>
+
+    <service name="FLINK">
+      <component name="FLINK_JOBHISTORYSERVER">
+        <upgrade>
+          <task xsi:type="restart-task"/>
+        </upgrade>
+      </component>
+      <component name="FLINK_CLIENT">
         <upgrade>
           <task xsi:type="restart-task"/>
         </upgrade>
