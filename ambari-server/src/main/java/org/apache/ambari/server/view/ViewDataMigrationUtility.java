@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 
+import org.apache.ambari.server.StaticallyInject;
 import org.apache.ambari.server.orm.entities.ViewEntity;
 import org.apache.ambari.server.orm.entities.ViewInstanceEntity;
 import org.apache.ambari.server.orm.entities.ViewInstancePropertyEntity;
@@ -36,9 +37,12 @@ import org.apache.ambari.view.migration.ViewDataMigrator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.inject.Inject;
+
 /**
  * Helper class for view data migration.
  */
+@StaticallyInject
 public class ViewDataMigrationUtility {
 
   /**
@@ -50,6 +54,13 @@ public class ViewDataMigrationUtility {
    * The View Registry.
    */
   private ViewRegistry viewRegistry;
+
+  /**
+   * Saves a migrated instance by value (clemlab, AMBARI-1145). Statically injected: this class is
+   * created by the registry with {@code new}, the saver by Guice (its save runs in a transaction).
+   */
+  @Inject
+  private static ViewMigratedInstanceSaver migratedInstanceSaver;
 
   /**
    * Constructor.
@@ -127,14 +138,17 @@ public class ViewDataMigrationUtility {
   }
 
   /**
-   * Saves the target instance (instance data and properties) through the view registry.
+   * Saves the target instance (instance data and properties): by value into the instance the
+   * database holds when there is one (clemlab, AMBARI-1145), through the view registry otherwise.
    *
    * @param targetInstanceDefinition the migrated instance
    * @throws ViewDataMigrationException if the instance can not be saved
    */
   protected void persistTargetInstance(ViewInstanceEntity targetInstanceDefinition) throws ViewDataMigrationException {
     try {
-      viewRegistry.updateViewInstance(targetInstanceDefinition);
+      if (migratedInstanceSaver == null || !migratedInstanceSaver.save(targetInstanceDefinition)) {
+        viewRegistry.updateViewInstance(targetInstanceDefinition);
+      }
     } catch (ValidationException | SystemException e) {
       String msg = "Migrated data of view instance " + targetInstanceDefinition.getInstanceName()
           + " could not be saved: " + e.getMessage();
