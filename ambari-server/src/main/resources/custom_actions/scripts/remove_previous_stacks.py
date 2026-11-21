@@ -43,6 +43,9 @@ class RemovePreviousStacks(Script):
     version = config['commandParams']['version']
     self.stack_tool_package = stack_tools.get_stack_tool_package(stack_tools.STACK_SELECTOR_NAME)
 
+    # the given version is the one kept: everything is selected to it at the end
+    self.check_version_in_use(structured_output, version)
+
     versions_to_remove = self.get_lower_versions(version)
     self.pkg_provider = ManagerFactory.get()
 
@@ -120,6 +123,31 @@ class RemovePreviousStacks(Script):
           for scope in ('INSTALL', 'STANDARD', 'PATCH'):
             links.update(data.get(scope, []))
     return links
+
+  def check_version_in_use(self, structured_output, version):
+    """
+    Refuses a version other than the one the components of this host run: the action ends by selecting the version
+    it keeps for every package, which would move a cluster back to an older version.
+    """
+    links = self.links_in_use()
+    if not os.path.isdir(stack_root_current):
+      return
+    others = set()
+    for name in os.listdir(stack_root_current):
+      if links is not None and name not in links:
+        continue
+      target = os.path.realpath(os.path.join(stack_root_current, name))
+      if not os.path.exists(target) or not target.startswith(stack_root):
+        continue
+      used = os.path.relpath(target, stack_root).split(os.sep)[0]
+      if used != version:
+        others.add(used)
+    if others:
+      message = "Version {0} is not the version the components of this host use ({1}): give the current version, " \
+                "the versions older than it are removed".format(version, ", ".join(sorted(others)))
+      structured_output["remove_previous_stacks"] = {"exit_code": -1, "message": message}
+      self.put_structured_out(structured_output)
+      raise Fail(message)
 
   def check_no_symlink_to_version(self, structured_output, version):
     links = self.links_in_use()
