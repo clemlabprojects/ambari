@@ -427,7 +427,11 @@ public class CheckDescription {
       new ImmutableMap.Builder<String,String>().put(AbstractCheckDescriptor.DEFAULT,
         "The target stack requires a secondary JDK, but secondary.java.home is not configured. " +
         "Express upgrades select and validate both JDK paths in the wizard before scheduling the runtime switch. " +
-        "For a rolling upgrade, configure the supported secondary JDK before proceeding.").build());
+        "For a rolling upgrade, configure the supported secondary JDK before proceeding.")
+      .put(SecondaryJavaHomeCheck.PRIMARY_JAVA_KEY,
+        "A rolling upgrade to {{version}} cannot change the stack JDKs, and the primary Java home {{home}} is {{found}}: " +
+        "this version needs JDK {{minimum}} or later as the primary Java home. Use an Express upgrade, which selects and " +
+        "switches the JDKs while the services are stopped.").build());
 
   public static CheckDescription KERBEROS_ADMIN_CREDENTIAL_CHECK = new CheckDescription("KERBEROS_ADMIN_CREDENTIAL_CHECK",
       PrereqCheckType.CLUSTER,

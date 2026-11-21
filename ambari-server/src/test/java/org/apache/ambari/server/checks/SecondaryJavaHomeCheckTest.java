@@ -80,6 +80,10 @@ public class SecondaryJavaHomeCheckTest {
     Mockito.when(m_clusters.getCluster("cluster")).thenReturn(cluster);
     Mockito.when(runtimes.transitionRequirements(cluster, m_repositoryVersion)).thenReturn(requirements);
 
+    // a rolling upgrade also requires a primary Java home the target accepts (JDK 17 here)
+    Mockito.when(m_configuration.getJavaHome()).thenReturn(jdk("17.0.13").getAbsolutePath());
+    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("1.3.2.0-72");
+
     // STANDARD repo so the orchestration qualification applies.
     Mockito.when(m_repositoryVersion.getType()).thenReturn(RepositoryType.STANDARD);
   }
@@ -199,5 +203,86 @@ public class SecondaryJavaHomeCheckTest {
     Mockito.when(runtimes.transitionRequirements(cluster, m_repositoryVersion)).thenReturn(null);
     Assert.assertFalse(m_check.isApplicable(request));
     Assert.assertTrue(m_check.isApplicable(request("1.3.2.0-36")));
+  }
+
+  private java.io.File jdk(String version) throws Exception {
+    java.io.File home = java.nio.file.Files.createTempDirectory("jdk").toFile();
+    home.deleteOnExit();
+    if (version != null) {
+      java.io.File release = new java.io.File(home, "release");
+      java.nio.file.Files.write(release.toPath(),
+          ("IMPLEMENTOR=\"Eclipse Adoptium\"\nJAVA_VERSION=\"" + version + "\"\nOS_NAME=\"Linux\"\n").getBytes("UTF-8"));
+      release.deleteOnExit();
+    }
+    return home;
+  }
+
+  private PrerequisiteCheck rolling(String primaryJavaHome) throws Exception {
+    JsonObject crossing = new JsonObject();
+    crossing.addProperty("primary_java_major", 21);
+    crossing.addProperty("primary_java_major_fallback", 17);
+    crossing.addProperty("secondary_java_major", 21);
+    Mockito.when(runtimes.transitionRequirements(cluster, m_repositoryVersion)).thenReturn(crossing);
+    Mockito.when(m_configuration.getJavaHome()).thenReturn(primaryJavaHome);
+    Mockito.when(m_configuration.getSecondaryJavaHome()).thenReturn("/usr/lib/jvm/java-21-openjdk");
+    Mockito.when(m_repositoryVersion.getVersion()).thenReturn("1.3.2.0-72");
+    PrereqCheckRequest request = new PrereqCheckRequest("cluster", UpgradeType.ROLLING);
+    request.setTargetRepositoryVersion(m_repositoryVersion);
+    PrerequisiteCheck check = new PrerequisiteCheck(CheckDescription.SECONDARY_JAVA_HOME, "cluster");
+    m_check.perform(check, request);
+    return check;
+  }
+
+  @Test
+  public void testRollingUpgradePackRunsTheCheckWithoutExplicitEntry() {
+    UpgradePack pack = Mockito.mock(UpgradePack.class);
+    Mockito.when(pack.getType()).thenReturn(UpgradeType.ROLLING);
+    Mockito.when(pack.getPrerequisiteChecks()).thenReturn(Collections.emptyList());
+    UpgradeCheckRegistry registry = new UpgradeCheckRegistry();
+    registry.register(m_check);
+
+    Assert.assertEquals(Collections.singletonList(m_check), registry.getFilteredUpgradeChecks(pack));
+  }
+
+  @Test
+  public void testRollingUpgradeRefusedWithJdk8PrimaryJavaHome() throws Exception {
+    PrerequisiteCheck check = rolling(jdk("1.8.0_412").getAbsolutePath());
+    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    Assert.assertTrue(check.getFailReason(), check.getFailReason().contains("JDK 8"));
+    Assert.assertTrue(check.getFailReason(), check.getFailReason().contains("Express"));
+    Assert.assertTrue(check.getFailReason(), check.getFailReason().contains("1.3.2.0-72"));
+  }
+
+  @Test
+  public void testRollingUpgradeRefusedWithJdk11PrimaryJavaHome() throws Exception {
+    Assert.assertEquals(PrereqCheckStatus.FAIL, rolling(jdk("11.0.25").getAbsolutePath()).getStatus());
+  }
+
+  @Test
+  public void testRollingUpgradeAllowedWithJdk17PrimaryJavaHome() throws Exception {
+    Assert.assertEquals(PrereqCheckStatus.PASS, rolling(jdk("17.0.13").getAbsolutePath()).getStatus());
+  }
+
+  @Test
+  public void testRollingUpgradeAllowedWithJdk21PrimaryJavaHome() throws Exception {
+    Assert.assertEquals(PrereqCheckStatus.PASS, rolling(jdk("21.0.5").getAbsolutePath()).getStatus());
+  }
+
+  @Test
+  public void testRollingUpgradeRefusedWhenThePrimaryJdkCannotBeRead() throws Exception {
+    PrerequisiteCheck check = rolling(jdk(null).getAbsolutePath());
+    Assert.assertEquals(PrereqCheckStatus.FAIL, check.getStatus());
+    Assert.assertTrue(check.getFailReason(), check.getFailReason().contains("an unknown JDK"));
+  }
+
+  @Test
+  public void testRollingUpgradeWithinTheRuntimeRangeIgnoresThePrimaryJdk() throws Exception {
+    PrerequisiteCheck check = rolling(jdk("1.8.0_412").getAbsolutePath());
+    Mockito.when(runtimes.transitionRequirements(cluster, m_repositoryVersion)).thenReturn(null);
+    check = new PrerequisiteCheck(CheckDescription.SECONDARY_JAVA_HOME, "cluster");
+    PrereqCheckRequest request = new PrereqCheckRequest("cluster", UpgradeType.ROLLING);
+    request.setTargetRepositoryVersion(m_repositoryVersion);
+    m_check.perform(check, request);
+    Assert.assertEquals(PrereqCheckStatus.PASS, check.getStatus());
   }
 }
