@@ -487,6 +487,10 @@
         <task xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_default"/>
       </execute-stage>
 
+      <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Add the Atlas OpenMetadata federation settings">
+        <task xsi:type="configure" id="odp_1_3_2_0_atlas_openmetadata_federation_props"/>
+      </execute-stage>
+
       <execute-stage service="ATLAS" component="ATLAS_SERVER" title="Commit Atlas index mutations to Solr (wait-searcher)">
         <task xsi:type="configure" id="odp_1_3_2_0_atlas_solr_wait_searcher"/>
       </execute-stage>
