@@ -1187,7 +1187,11 @@ def update_ambari_env():
           val = line.split("=", 1)[1].strip()
           if val.startswith('"') and val.endswith('"'):
             val = val[1:-1]
-          jvm_args = val  # reset if direct assignment
+          # AMBARI_JVM_ARGS="$AMBARI_JVM_ARGS ..." appends to the previous value (the form ambari-env.sh uses)
+          if re.match(r'\$\{?AMBARI_JVM_ARGS\}?(\s|$)', val):
+            jvm_args += " " + re.sub(r'^\$\{?AMBARI_JVM_ARGS\}?', '', val)
+          else:
+            jvm_args = val  # reset if direct assignment
     # Now extract -Xmx, -Xms, -Xmn
     xmx_match = re.search(r'-Xmx([0-9]+[kKmMgG]?)', jvm_args)
     xms_match = re.search(r'-Xms([0-9]+[kKmMgG]?)', jvm_args)
