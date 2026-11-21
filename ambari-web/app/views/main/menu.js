@@ -100,7 +100,9 @@ App.MainSideMenuView = Em.CollectionView.extend({
       // create dropdown categories for each menu item
       let {router} = App;
       if (itemName === 'admin') {
-        if (App.isAuthorized('AMBARI.MANAGE_CONFIGURATION')) {
+        // listed during an upgrade too (disabled), like the other categories: App.isAuthorized is false while an
+        // upgrade runs, and a category that disappears leaves its menu item view reading a missing entry
+        if (App.isAuthorized('AMBARI.MANAGE_CONFIGURATION') || upg) {
           categories.push({name: 'javaRuntimes', url: 'javaRuntimes', label: Em.I18n.t('admin.java.title'), disabled: upg, href: '#'});
         }
         if(App.isAuthorized('CLUSTER.VIEW_STACK_DETAILS, CLUSTER.UPGRADE_DOWNGRADE_STACK') || upg) {
@@ -158,7 +160,9 @@ App.MainSideMenuView = Em.CollectionView.extend({
       classNames: ['submenu-li'],
       isActive: Em.computed.equalProperties('item', 'parentView.selectedAdminItem'),
       isDisabled: function () {
-        return !!this.get('parentView.dropdownCategories').findProperty('name', this.get('item')).disabled;
+        var category = this.get('parentView.dropdownCategories').findProperty('name', this.get('item'));
+        // the categories change with the upgrade state: this view can be evaluated once more before it is removed
+        return !!(category && category.disabled);
       }.property('item', 'parentView.dropdownCategories.@each.disabled'),
       goToCategory: function (event) {
         var itemName = this.get('parentView').get('content').routing;

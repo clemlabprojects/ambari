@@ -72,7 +72,8 @@ App.MainAdminView = Em.View.extend({
     classNameBindings: 'isActive:active isDisabled:disabled'.w(),
     isActive: Em.computed.equalProperties('item', 'parentView.selected'),
     isDisabled: function () {
-      return !!this.get('parentView.categories').findProperty('name', this.get('item'))['disabled'];
+      var category = this.get('parentView.categories').findProperty('name', this.get('item'));
+      return !!(category && category.disabled);
     }.property('item', 'parentView.categories.@each.disabled')
   }),
 
