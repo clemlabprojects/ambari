@@ -77,6 +77,8 @@ KEYSDIR="${KEYSDIR:?}"
 AMBARI_AGENT=ambari-agent
 PYTHON_WRAP=/usr/bin/ambari-python-wrap
 PIDFILE=$AMBARI_PID_DIR/$AMBARI_AGENT.pid
+# AmbariAgent.py, the parent that restarts main.py: the process systemd follows (PIDFile= of ambari-agent.service)
+WATCHDOG_PIDFILE=$AMBARI_PID_DIR/$AMBARI_AGENT-watchdog.pid
 OUTFILE=$AMBARI_AGENT_LOG_DIR/ambari-agent.out
 LOGFILE=$AMBARI_AGENT_LOG_DIR/ambari-agent.log
 AGENT_SCRIPT=/usr/lib/ambari-agent/lib/ambari_agent/main.py
@@ -234,6 +236,7 @@ case "${1:-}" in
           echo "Agent log at: $LOGFILE"
           exit -1
         fi
+        echo $PID > $WATCHDOG_PIDFILE
         tput bold
         echo "Ambari Agent successfully started"
         tput sgr0
@@ -287,7 +290,7 @@ case "${1:-}" in
             fi
           fi
           echo "Removing PID file at $PIDFILE"
-          ambari-sudo.sh rm -f $PIDFILE
+          ambari-sudo.sh rm -f $PIDFILE $WATCHDOG_PIDFILE
           tput bold
           echo "$AMBARI_AGENT successfully stopped"
           tput sgr0

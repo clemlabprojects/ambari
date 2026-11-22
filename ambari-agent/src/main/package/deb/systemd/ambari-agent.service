@@ -3,8 +3,10 @@
   After=network.target
   [Service]
   Type=forking
+  PIDFile=/run/ambari-agent/ambari-agent-watchdog.pid
   ExecStart=/etc/init.d/ambari-agent start
-  ExecStop=/etc/init.d/ambari-agent stop
+  # only stop the agent this unit runs: MAINPID is unset, or dead, when the agent was stopped from a shell
+  ExecStop=/bin/sh -c 'if [ -n "$$MAINPID" ] && kill -0 "$$MAINPID" 2>/dev/null; then exec /etc/init.d/ambari-agent stop; fi'
   LimitNOFILE=256000
   KillMode=process
   [Install]

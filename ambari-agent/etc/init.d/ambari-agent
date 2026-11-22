@@ -30,12 +30,17 @@
 
 run_as_user=`cat /etc/ambari-agent/conf/ambari-agent.ini | grep run_as_user | tr -d ' ' | grep -v '^;\|^#' | awk -F '=' '{ print $2}'`
 
-if [ "$EUID" != `id -u $run_as_user` ] ; then
-  command_prefx="su - $run_as_user -c"
-else
-  command_prefx="bash -c"
-fi
+agent_command="/var/lib/ambari-agent/bin/ambari-agent $@"
 
-eval "$command_prefx '/var/lib/ambari-agent/bin/ambari-agent $@'"
+if [ "$EUID" != `id -u $run_as_user` ] ; then
+  # Not "su -": su goes through pam_systemd, which opens a login session and moves the agent out of
+  # ambari-agent.service; systemd then loses track of it and runs ExecStop against a running agent.
+  # runuser has no pam_systemd; env -i + a login shell give the same clean environment as su -.
+  run_as_home=`getent passwd $run_as_user | cut -d: -f6`
+  cd "$run_as_home" 2>/dev/null || cd /
+  runuser $run_as_user -s /bin/bash -c "exec env -i HOME='$run_as_home' USER='$run_as_user' LOGNAME='$run_as_user' SHELL=/bin/bash LANG='${LANG:-C.UTF-8}' PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin /bin/bash -l -c '$agent_command'"
+else
+  bash -c "$agent_command"
+fi
 
 exit $?
