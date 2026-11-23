@@ -39,8 +39,8 @@ class TestOzoneServiceAdvisorLayout(TestCase):
 
   def colocation_errors(self, manager_hosts, scm_hosts):
     def component(name, hostnames):
-      return {"StackServiceComponents": {"component_name": name, "cardinality": "1+", "component_category": "MASTER",
-                                         "is_master": True, "hostnames": hostnames}}
+      return {"StackServiceComponents": {"component_name": name, "display_name": name, "cardinality": "1+",
+                                         "component_category": "MASTER", "is_master": True, "hostnames": hostnames}}
     services = {"services": [{"StackServices": {"service_name": "OZONE"},
                               "components": [component("OZONE_MANAGER", manager_hosts),
                                              component("OZONE_STORAGE_CONTAINER_MANAGER", scm_hosts)]}]}
