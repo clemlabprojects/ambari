@@ -428,6 +428,7 @@ Em.I18n.translations = {
   'requestInfo.oidcService': 'Install OIDC Service',
   'requestInfo.startServices':'Start Services',
   'requestInfo.startAddedServices':'Start Added Services',
+  'requestInfo.restartServicesBeforeStart':'Restart Services Required by the Added Services',
   'requestInfo.stopAllServices':'Stop All Services',
   'requestInfo.startAllServices':'Start All Services',
   'requestInfo.startHostComponent':'Start',

@@ -378,6 +378,10 @@ module.exports = App.WizardRoute.extend({
             addServiceController.saveClusterState('ADD_SERVICES_INSTALLING_3');
             wizardStep9Controller.navigateStep();
           });
+        } else if (wizardStep9Controller.get('content.cluster.status') === 'START FAILED') {
+          addServiceController.setInfoForStep9();
+          wizardStep9Controller.resetHostsForRetry();
+          wizardStep9Controller.retryStartServices();
         } else {
           wizardStep9Controller.navigateStep();
         }

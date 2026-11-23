@@ -17,7 +17,6 @@
  */
 var App = require('app');
 var stringUtils = require('utils/string_utils');
-var batchScheduledRequests = require('utils/batch_scheduled_requests');
 
 App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
 
@@ -137,7 +136,10 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * Computed property to determine if the Retry button should be made visible on the page.
    * @type {bool}
    */
-  showRetry: Em.computed.equal('content.cluster.status', 'INSTALL FAILED'),
+  showRetry: function () {
+    var status = this.get('content.cluster.status');
+    return status === 'INSTALL FAILED' || status === 'START FAILED' && this.get('content.controllerName') === 'addServiceController';
+  }.property('content.cluster.status', 'content.controllerName'),
 
   /**
    * Observer function: Calls {hostStatusUpdates} function once with change in a host status from any registered hosts.
@@ -477,38 +479,136 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method getAddedServicesList
    */
   getAddedServicesList: function () {
-    var servicesList = this.get('content.services').filterProperty('isSelected').filterProperty('isInstalled', false).mapProperty('serviceName');
-    // installed services the Add Service install stopped because the added services changed their configuration
-    var servicesToCycle = this.get('wizardController') && this.get('wizardController').getDBProperty('servicesToCycle');
-    if (servicesToCycle) {
-      return servicesList.concat(servicesToCycle).uniq();
-    }
-    if (servicesList.contains('OOZIE')) {
-      servicesList = servicesList.concat(['HDFS', 'YARN', 'MAPREDUCE2']);
-    }
-    return servicesList;
+    return this.get('content.services').filterProperty('isSelected').filterProperty('isInstalled', false).mapProperty('serviceName');
   },
 
   /**
-   * @param {string} componentName
-   * @returns {App.HostComponent[]}
-   * @method getStartedHostComponents
+   * Installed services the added services run on (storage, compute, table metadata).
+   * The configuration of these services is changed for the added services (proxy users and auth_to_local rules in
+   * core-site, KMS key provider, Hive Metastore notifications for Impala, Atlas hooks...): their started components with
+   * stale configs are restarted, in the role command order, as a request of their own that must succeed before the
+   * added services are started. A restart keeps each component down only while it restarts, so a failure of an added
+   * service never leaves them stopped.
+   * The other installed services with stale configs (Kafka, Knox, Ranger, Spark...) do not need their new
+   * configuration for the added services to start: they keep their restart indicator, as after any configuration change.
+   * @type {string[]}
    */
-  getStartedHostComponents: function (componentName) {
-    return App.HostComponent.find().filterProperty('componentName', componentName).filterProperty('workStatus', App.HostComponentStatus.started);
+  // RANGER: Ranger Admin maps the principals of an added service with the auth_to_local rules of core-site; until it
+  // is restarted it refuses the policy download of the new Ranger plugins (403) and the added service denies everyone
+  servicesToRestartBeforeStart: ['RANGER', 'HDFS', 'OZONE', 'YARN', 'MAPREDUCE2', 'HBASE', 'HIVE'],
+
+  /**
+   * Host components restarted by an earlier attempt of the restart before start are kept in the wizard db under this
+   * key: a component whose restart failed is stopped and still stale, it is restarted again by the Retry.
+   * @type {string}
+   */
+  restartedBeforeStartDbKey: 'hostComponentsRestartedBeforeStart',
+
+  /**
+   * @returns {string[]} installed services the restart before the start of the added services applies to
+   * @method getServicesToRestartBeforeStart
+   */
+  getServicesToRestartBeforeStart: function () {
+    var installedServices = this.get('content.services').filterProperty('isInstalled').mapProperty('serviceName');
+    return this.get('servicesToRestartBeforeStart').filter(function (serviceName) {
+      return installedServices.contains(serviceName);
+    });
   },
 
   /**
-   * @returns {boolean}
-   * @method shouldRestartHiveMetastoreBeforeStartingImpala
+   * Slave components the user added to installed services: they are installed at the host component level and started
+   * with the restart of the installed services, because the start of the added services only starts these services.
+   * @returns {{serviceName: string, componentName: string, hostName: string}[]}
+   * @method getAddedHostComponentsOfInstalledServices
    */
-  shouldRestartHiveMetastoreBeforeStartingImpala: function () {
-    var addedServices = this.getAddedServicesList();
-    // when Hive is started with the added services, the role command order already starts the Hive Metastore
-    // after HDFS and YARN and before the Impala catalog
-    return this.get('content.controllerName') === 'addServiceController' &&
-      addedServices.contains('IMPALA') && !addedServices.contains('HIVE') &&
-      this.getStartedHostComponents('HIVE_METASTORE').length > 0;
+  getAddedHostComponentsOfInstalledServices: function () {
+    var installedServices = this.get('content.services').filterProperty('isInstalled').mapProperty('serviceName');
+    var result = [];
+    (this.get('content.slaveComponentHosts') || []).forEach(function (slaveComponent) {
+      var stackComponent = App.StackServiceComponent.find().findProperty('componentName', slaveComponent.componentName);
+      var serviceName = stackComponent && stackComponent.get('serviceName');
+      if (!serviceName || stackComponent.get('isClient') || !installedServices.contains(serviceName)) {
+        return;
+      }
+      (slaveComponent.hosts || []).filterProperty('isInstalled', false).forEach(function (host) {
+        result.push({serviceName: serviceName, componentName: slaveComponent.componentName, hostName: host.hostName});
+      });
+    });
+    return result;
+  },
+
+  /**
+   * @param {{componentName: string, hostName: string}} hostComponent
+   * @returns {string}
+   * @method getHostComponentKey
+   */
+  getHostComponentKey: function (hostComponent) {
+    return hostComponent.componentName + '@' + hostComponent.hostName;
+  },
+
+  /**
+   * Host components to restart before the added services are started.
+   * @param {object[]} staleHostComponents items of <code>wizard.step9.addService.staleHostComponents</code>
+   * @param {string[]} restartedBefore keys of the host components an earlier attempt restarted
+   * @param {{serviceName: string, componentName: string, hostName: string}[]} addedHostComponents
+   * @returns {{serviceName: string, componentName: string, hostName: string}[]}
+   * @method getHostComponentsToRestartBeforeStart
+   */
+  getHostComponentsToRestartBeforeStart: function (staleHostComponents, restartedBefore, addedHostComponents) {
+    var self = this;
+    var result = [];
+    var keys = [];
+    var add = function (hostComponent) {
+      var key = self.getHostComponentKey(hostComponent);
+      if (!keys.contains(key)) {
+        keys.push(key);
+        result.push(hostComponent);
+      }
+    };
+    staleHostComponents.forEach(function (item) {
+      var hostRoles = item.HostRoles;
+      var hostComponent = {
+        serviceName: hostRoles.service_name,
+        componentName: hostRoles.component_name,
+        hostName: hostRoles.host_name
+      };
+      if (hostRoles.maintenance_state && hostRoles.maintenance_state !== 'OFF') {
+        return;
+      }
+      // components that are not running are left alone, except the ones a failed attempt stopped
+      if (hostRoles.state === App.HostComponentStatus.started ||
+        hostRoles.state === App.HostComponentStatus.stopped && restartedBefore.contains(self.getHostComponentKey(hostComponent))) {
+        add(hostComponent);
+      }
+    });
+    addedHostComponents.forEach(add);
+    return result;
+  },
+
+  /**
+   * @param {{serviceName: string, componentName: string, hostName: string}[]} hostComponents
+   * @returns {{service_name: string, component_name: string, hosts: string}[]} one resource filter per component
+   * @method getRestartResourceFilters
+   */
+  getRestartResourceFilters: function (hostComponents) {
+    var filters = [];
+    var filtersByComponent = {};
+    hostComponents.forEach(function (hostComponent) {
+      var filter = filtersByComponent[hostComponent.componentName];
+      if (!filter) {
+        filter = {service_name: hostComponent.serviceName, component_name: hostComponent.componentName, hosts: []};
+        filtersByComponent[hostComponent.componentName] = filter;
+        filters.push(filter);
+      }
+      filter.hosts.push(hostComponent.hostName);
+    });
+    return filters.map(function (filter) {
+      return {
+        service_name: filter.service_name,
+        component_name: filter.component_name,
+        hosts: filter.hosts.uniq().sort().join(',')
+      };
+    });
   },
 
   /**
@@ -517,24 +617,61 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method launchPreStartServiceActions
    */
   launchPreStartServiceActions: function () {
-    if (this.shouldRestartHiveMetastoreBeforeStartingImpala()) {
-      return this.restartHiveMetastoreBeforeStartingImpala();
+    if (this.get('content.controllerName') === 'addServiceController') {
+      return this.loadHostComponentsToRestartBeforeStart();
     }
     return this.launchStartServices();
   },
 
   /**
-   * Restart Hive Metastore before the first Impala start so metastore notification
-   * settings written by the Impala advisor are active before catalogd starts.
+   * Find the host components to restart before the added services are started, once they are installed: the install
+   * request can still change the configuration of the installed services (Kerberos identities of the added services).
    * @return {$.ajax|null}
-   * @method restartHiveMetastoreBeforeStartingImpala
+   * @method loadHostComponentsToRestartBeforeStart
    */
-  restartHiveMetastoreBeforeStartingImpala: function () {
-    var hiveMetastoreHosts = this.getStartedHostComponents('HIVE_METASTORE').mapProperty('hostName').uniq();
+  loadHostComponentsToRestartBeforeStart: function () {
+    var services = this.getServicesToRestartBeforeStart();
+    if (!services.length) {
+      return this.loadHostComponentsToRestartBeforeStartSuccessCallback({items: []});
+    }
+    return App.ajax.send({
+      name: 'wizard.step9.addService.staleHostComponents',
+      sender: this,
+      data: {
+        services: services.join(',')
+      },
+      success: 'loadHostComponentsToRestartBeforeStartSuccessCallback',
+      error: 'restartServicesBeforeStartErrorCallback'
+    });
+  },
 
-    if (!hiveMetastoreHosts.length) {
+  /**
+   * @param {object} data
+   * @return {$.ajax|null}
+   * @method loadHostComponentsToRestartBeforeStartSuccessCallback
+   */
+  loadHostComponentsToRestartBeforeStartSuccessCallback: function (data) {
+    var restartedBefore = this.get('wizardController').getDBProperty(this.get('restartedBeforeStartDbKey')) || [];
+    var hostComponents = this.getHostComponentsToRestartBeforeStart((data && data.items) || [], restartedBefore,
+      this.getAddedHostComponentsOfInstalledServices());
+    return this.restartServicesBeforeStart(hostComponents, restartedBefore);
+  },
+
+  /**
+   * Restart the installed services the added services need, as a request of its own: the added services are started
+   * only once it completed, and a failure of an added service can no longer leave them stopped.
+   * @param {{serviceName: string, componentName: string, hostName: string}[]} hostComponents
+   * @param {string[]} restartedBefore
+   * @return {$.ajax|null}
+   * @method restartServicesBeforeStart
+   */
+  restartServicesBeforeStart: function (hostComponents, restartedBefore) {
+    if (!hostComponents.length) {
       return this.launchStartServices();
     }
+
+    this.get('wizardController').setDBProperty(this.get('restartedBeforeStartDbKey'),
+      (restartedBefore || []).concat(hostComponents.map(this.getHostComponentKey)).uniq());
 
     if (App.get('testMode')) {
       this.set('numPolls', 6);
@@ -544,24 +681,23 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       name: 'restart.hostComponents',
       sender: this,
       data: {
-        context: 'Restart Hive Metastore before starting Impala',
-        resource_filters: [{
-          service_name: 'HIVE',
-          component_name: 'HIVE_METASTORE',
-          hosts: hiveMetastoreHosts.join(',')
-        }],
-        operation_level: batchScheduledRequests.getOperationLevelObject('HOST_COMPONENT', 'HIVE', 'HIVE_METASTORE')
+        context: Em.I18n.t('requestInfo.restartServicesBeforeStart'),
+        resource_filters: this.getRestartResourceFilters(hostComponents),
+        operation_level: {
+          level: 'CLUSTER',
+          cluster_name: App.get('clusterName')
+        }
       },
-      success: 'restartHiveMetastoreBeforeStartingImpalaSuccessCallback',
-      error: 'restartHiveMetastoreBeforeStartingImpalaErrorCallback'
+      success: 'restartServicesBeforeStartSuccessCallback',
+      error: 'restartServicesBeforeStartErrorCallback'
     });
   },
 
   /**
    * @param {object} jsonData
-   * @method restartHiveMetastoreBeforeStartingImpalaSuccessCallback
+   * @method restartServicesBeforeStartSuccessCallback
    */
-  restartHiveMetastoreBeforeStartingImpalaSuccessCallback: function (jsonData) {
+  restartServicesBeforeStartSuccessCallback: function (jsonData) {
     if (!jsonData) {
       return this.launchStartServices();
     }
@@ -571,7 +707,7 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       requestId: jsonData.Requests.id,
       isStartError: false,
       isCompleted: false,
-      pendingStartAction: 'RESTART_HIVE_METASTORE'
+      pendingStartAction: 'RESTART_SERVICES'
     });
 
     App.clusterStatus.setClusterStatus({
@@ -584,9 +720,10 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   },
 
   /**
-   * @method restartHiveMetastoreBeforeStartingImpalaErrorCallback
+   * The added services are not started: Retry restarts the installed services again, then starts the added ones.
+   * @method restartServicesBeforeStartErrorCallback
    */
-  restartHiveMetastoreBeforeStartingImpalaErrorCallback: function () {
+  restartServicesBeforeStartErrorCallback: function () {
     this.set('startCallFailed', true);
     this.saveClusterStatus({
       status: 'START FAILED',
@@ -607,6 +744,24 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
       body: Em.I18n.t('installer.step9.service.start.failed'),
       'data-qa': 'start-failed-modal'
     });
+  },
+
+  /**
+   * Retry of a failed start in the Add Service wizard: restart the installed services that still need it, then start
+   * the added services that are not started yet.
+   * @return {$.ajax|null}
+   * @method retryStartServices
+   */
+  retryStartServices: function () {
+    this.saveClusterStatus({
+      status: 'INSTALLED',
+      isStartError: false,
+      isCompleted: false,
+      pendingStartAction: null
+    });
+    this.loadStep();
+    this.set('progress', '34');
+    return this.launchPreStartServiceActions();
   },
 
   /**
@@ -740,6 +895,10 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
    * @method launchStartServicesErrorCallback
    */
   launchStartServicesErrorCallback: function (jqXHR, ajaxOptions, error, opt) {
+    if (jqXHR && jqXHR.status === 200) {
+      // empty answer: every service of the request is already started (e.g. Retry after a failed service check)
+      return this.launchStartServicesSuccessCallback(null);
+    }
     this.set('startCallFailed', true);
     var clusterStatus = {
       status: 'START FAILED',
@@ -952,19 +1111,13 @@ App.WizardStep9Controller = Em.Controller.extend(App.ReloadPopupMixin, {
   isServicesStarted: function (polledData) {
     var clusterStatus = {};
     if (!polledData.someProperty('Tasks.status', 'PENDING') && !polledData.someProperty('Tasks.status', 'QUEUED') && !polledData.someProperty('Tasks.status', 'IN_PROGRESS')) {
-      if (this.get('content.cluster.pendingStartAction') === 'RESTART_HIVE_METASTORE') {
+      // RESTART_HIVE_METASTORE: request of a wizard started before the installed services were restarted as a whole
+      if (['RESTART_SERVICES', 'RESTART_HIVE_METASTORE'].contains(this.get('content.cluster.pendingStartAction')) &&
+        this.isSuccess(polledData)) {
         this.saveClusterStatus({
           pendingStartAction: null
         });
-        if (this.isSuccess(polledData)) {
-          this.launchStartServices();
-        } else {
-          this.saveClusterStatus({
-            status: 'START FAILED',
-            requestId: this.get('content.cluster.requestId'),
-            isCompleted: true
-          });
-        }
+        this.launchStartServices();
         return true;
       }
       this.set('progress', '100');

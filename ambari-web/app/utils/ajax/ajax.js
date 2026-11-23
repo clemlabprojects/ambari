@@ -1709,8 +1709,8 @@ var urls = {
     'real': '/clusters/{clusterName}/kerberos_descriptors/STACK',
     'mock': '/data/wizard/kerberos/stack_descriptors.json'
   },
-  'service.addService.startedStaleHostComponents': {
-    'real': '/clusters/{clusterName}/host_components?HostRoles/stale_configs=true&HostRoles/state=STARTED&HostRoles/service_name.in({services})&fields=HostRoles/service_name&minimal_response=true',
+  'wizard.step9.addService.staleHostComponents': {
+    'real': '/clusters/{clusterName}/host_components?HostRoles/stale_configs=true&HostRoles/service_name.in({services})&fields=HostRoles/service_name,HostRoles/component_name,HostRoles/host_name,HostRoles/state,HostRoles/maintenance_state&minimal_response=true',
     'mock': ''
   },
   'admin.oidc.staleHostComponents': {

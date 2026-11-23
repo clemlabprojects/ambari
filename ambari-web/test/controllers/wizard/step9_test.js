@@ -76,7 +76,21 @@ describe('App.InstallerStep9Controller', function () {
     modelSetup.cleanStackServiceComponent();
   });
 
-  App.TestAliases.testAsComputedEqual(getController(), 'showRetry', 'content.cluster.status', 'INSTALL FAILED');
+  describe('#showRetry', function () {
+    [
+      {controllerName: 'installerController', status: 'INSTALL FAILED', e: true},
+      {controllerName: 'installerController', status: 'START FAILED', e: false},
+      {controllerName: 'addServiceController', status: 'INSTALL FAILED', e: true},
+      {controllerName: 'addServiceController', status: 'START FAILED', e: true},
+      {controllerName: 'addServiceController', status: 'INSTALLED', e: false},
+      {controllerName: 'addServiceController', status: 'STARTED', e: false}
+    ].forEach(function (t) {
+      it(t.controllerName + ' ' + t.status, function () {
+        c.set('content', {controllerName: t.controllerName, cluster: {status: t.status}});
+        expect(c.get('showRetry')).to.equal(t.e);
+      });
+    });
+  });
 
   describe('#isSubmitDisabled', function () {
     var tests = Em.A([
@@ -674,6 +688,225 @@ describe('App.InstallerStep9Controller', function () {
         expect(c.launchStartServices(function(){})).to.be.true;
       });
     })
+  });
+
+  describe('Add Service: restart of the installed services before the start of the added ones', function () {
+
+    var services = [
+      Em.Object.create({serviceName: 'ZOOKEEPER', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'HDFS', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'YARN', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'MAPREDUCE2', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'HBASE', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'HIVE', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'KAFKA', isInstalled: true, isSelected: true}),
+      Em.Object.create({serviceName: 'OOZIE', isInstalled: false, isSelected: true}),
+      Em.Object.create({serviceName: 'IMPALA', isInstalled: false, isSelected: true}),
+      Em.Object.create({serviceName: 'OZONE', isInstalled: false, isSelected: true}),
+      Em.Object.create({serviceName: 'KUDU', isInstalled: false, isSelected: false})
+    ];
+
+    var item = function (service, component, host, state, maintenance) {
+      return {HostRoles: {service_name: service, component_name: component, host_name: host, state: state, maintenance_state: maintenance || 'OFF'}};
+    };
+
+    var db;
+
+    beforeEach(function () {
+      db = {};
+      c.set('content', {controllerName: 'addServiceController', services: services, slaveComponentHosts: [], cluster: {status: 'PENDING'}});
+      c.set('wizardController', Em.Object.create({
+        getDBProperty: function (key) {
+          return db[key];
+        },
+        setDBProperty: function (key, value) {
+          db[key] = value;
+        }
+      }));
+    });
+
+    describe('#getAddedServicesList', function () {
+      it('returns the added services only (installed services are restarted before, not started with them)', function () {
+        expect(c.getAddedServicesList()).to.eql(['OOZIE', 'IMPALA', 'OZONE']);
+      });
+    });
+
+    describe('#getServicesToRestartBeforeStart', function () {
+      it('returns the installed services the added services run on', function () {
+        expect(c.getServicesToRestartBeforeStart()).to.eql(['HDFS', 'YARN', 'MAPREDUCE2', 'HBASE', 'HIVE']);
+      });
+    });
+
+    describe('#getHostComponentsToRestartBeforeStart', function () {
+      var stale = [
+        item('HDFS', 'NAMENODE', 'm1', 'STARTED'),
+        item('HDFS', 'NAMENODE', 'm2', 'STARTED'),
+        item('HDFS', 'DATANODE', 'w1', 'STARTED'),
+        item('HDFS', 'DATANODE', 'w2', 'INSTALLED'),
+        item('HDFS', 'DATANODE', 'w3', 'STARTED', 'IMPLIED_FROM_HOST'),
+        item('HDFS', 'HDFS_CLIENT', 'w1', 'INSTALLED'),
+        item('HIVE', 'HIVE_METASTORE', 'm2', 'INSTALLED')
+      ];
+      it('restarts the started components with stale configs that are not in maintenance', function () {
+        expect(c.getHostComponentsToRestartBeforeStart(stale, [], []).map(c.getHostComponentKey)).to.eql(['NAMENODE@m1', 'NAMENODE@m2', 'DATANODE@w1']);
+      });
+      it('restarts again the stopped components an earlier attempt restarted', function () {
+        expect(c.getHostComponentsToRestartBeforeStart(stale, ['HIVE_METASTORE@m2', 'NAMENODE@m1'], []).map(c.getHostComponentKey))
+          .to.eql(['NAMENODE@m1', 'NAMENODE@m2', 'DATANODE@w1', 'HIVE_METASTORE@m2']);
+      });
+      it('starts the slaves added to installed services', function () {
+        var added = [{serviceName: 'YARN', componentName: 'NODEMANAGER', hostName: 'w4'}, {serviceName: 'HDFS', componentName: 'DATANODE', hostName: 'w1'}];
+        expect(c.getHostComponentsToRestartBeforeStart(stale, [], added).map(c.getHostComponentKey))
+          .to.eql(['NAMENODE@m1', 'NAMENODE@m2', 'DATANODE@w1', 'NODEMANAGER@w4']);
+      });
+    });
+
+    describe('#getRestartResourceFilters', function () {
+      it('groups the hosts by component', function () {
+        expect(c.getRestartResourceFilters([
+          {serviceName: 'HDFS', componentName: 'NAMENODE', hostName: 'm2'},
+          {serviceName: 'HIVE', componentName: 'HIVE_METASTORE', hostName: 'm2'},
+          {serviceName: 'HDFS', componentName: 'NAMENODE', hostName: 'm1'}
+        ])).to.eql([
+          {service_name: 'HDFS', component_name: 'NAMENODE', hosts: 'm1,m2'},
+          {service_name: 'HIVE', component_name: 'HIVE_METASTORE', hosts: 'm2'}
+        ]);
+      });
+    });
+
+    describe('#launchPreStartServiceActions', function () {
+      beforeEach(function () {
+        sinon.stub(c, 'launchStartServices', Em.K);
+      });
+      afterEach(function () {
+        c.launchStartServices.restore();
+      });
+      it('looks for the stale components of the installed services first', function () {
+        c.launchPreStartServiceActions();
+        var args = testHelpers.findAjaxRequest('name', 'wizard.step9.addService.staleHostComponents');
+        expect(args[0].data.services).to.equal('HDFS,YARN,MAPREDUCE2,HBASE,HIVE');
+        expect(c.launchStartServices.called).to.be.false;
+      });
+      it('starts the services at once in the other wizards', function () {
+        c.set('content.controllerName', 'installerController');
+        c.launchPreStartServiceActions();
+        expect(testHelpers.findAjaxRequest('name', 'wizard.step9.addService.staleHostComponents')).to.be.undefined;
+        expect(c.launchStartServices.calledOnce).to.be.true;
+      });
+    });
+
+    describe('#loadHostComponentsToRestartBeforeStartSuccessCallback', function () {
+      beforeEach(function () {
+        sinon.stub(c, 'launchStartServices', Em.K);
+        sinon.stub(App, 'get', function (key) {
+          return key === 'clusterName' ? 'c1' : undefined;
+        });
+      });
+      afterEach(function () {
+        c.launchStartServices.restore();
+        App.get.restore();
+      });
+      it('starts the added services when nothing has to be restarted', function () {
+        c.loadHostComponentsToRestartBeforeStartSuccessCallback({items: [item('HDFS', 'DATANODE', 'w2', 'INSTALLED')]});
+        expect(testHelpers.findAjaxRequest('name', 'restart.hostComponents')).to.be.undefined;
+        expect(c.launchStartServices.calledOnce).to.be.true;
+      });
+      it('restarts the stale components in one request before starting the added services', function () {
+        c.loadHostComponentsToRestartBeforeStartSuccessCallback({items: [
+          item('HDFS', 'NAMENODE', 'm1', 'STARTED'),
+          item('HIVE', 'HIVE_METASTORE', 'm2', 'STARTED')
+        ]});
+        var args = testHelpers.findAjaxRequest('name', 'restart.hostComponents');
+        expect(args[0].data).to.eql({
+          context: Em.I18n.t('requestInfo.restartServicesBeforeStart'),
+          resource_filters: [
+            {service_name: 'HDFS', component_name: 'NAMENODE', hosts: 'm1'},
+            {service_name: 'HIVE', component_name: 'HIVE_METASTORE', hosts: 'm2'}
+          ],
+          operation_level: {level: 'CLUSTER', cluster_name: 'c1'}
+        });
+        expect(args[0].success).to.equal('restartServicesBeforeStartSuccessCallback');
+        expect(db.hostComponentsRestartedBeforeStart).to.eql(['NAMENODE@m1', 'HIVE_METASTORE@m2']);
+        expect(c.launchStartServices.called).to.be.false;
+      });
+    });
+
+    describe('#restartServicesBeforeStartSuccessCallback', function () {
+      beforeEach(function () {
+        sinon.stub(c, 'saveClusterStatus', Em.K);
+        sinon.stub(c, 'startPolling', Em.K);
+        sinon.stub(App.clusterStatus, 'setClusterStatus', Em.K);
+      });
+      afterEach(function () {
+        c.saveClusterStatus.restore();
+        c.startPolling.restore();
+        App.clusterStatus.setClusterStatus.restore();
+      });
+      it('polls the restart request', function () {
+        c.restartServicesBeforeStartSuccessCallback({Requests: {id: 59}});
+        expect(c.saveClusterStatus.args[0][0]).to.eql({
+          status: 'INSTALLED',
+          requestId: 59,
+          isStartError: false,
+          isCompleted: false,
+          pendingStartAction: 'RESTART_SERVICES'
+        });
+        expect(c.startPolling.calledOnce).to.be.true;
+      });
+    });
+
+    describe('#isServicesStarted after the restart', function () {
+      beforeEach(function () {
+        sinon.stub(c, 'saveClusterStatus', Em.K);
+        sinon.stub(c, 'launchStartServices', Em.K);
+        c.set('content.cluster', {status: 'INSTALLED', requestId: 59, pendingStartAction: 'RESTART_SERVICES'});
+      });
+      afterEach(function () {
+        c.saveClusterStatus.restore();
+        c.launchStartServices.restore();
+      });
+      it('starts the added services once every restart completed', function () {
+        expect(c.isServicesStarted([{Tasks: {status: 'COMPLETED'}}, {Tasks: {status: 'COMPLETED'}}])).to.be.true;
+        expect(c.launchStartServices.calledOnce).to.be.true;
+      });
+      it('does not start the added services when a restart failed', function () {
+        expect(c.isServicesStarted([{Tasks: {status: 'COMPLETED'}}, {Tasks: {status: 'FAILED'}}])).to.be.true;
+        expect(c.launchStartServices.called).to.be.false;
+        expect(c.saveClusterStatus.lastCall.args[0].status).to.equal('START FAILED');
+      });
+    });
+
+    describe('#retryStartServices', function () {
+      beforeEach(function () {
+        sinon.stub(c, 'saveClusterStatus', Em.K);
+        sinon.stub(c, 'loadStep', Em.K);
+        sinon.stub(c, 'launchPreStartServiceActions', Em.K);
+      });
+      afterEach(function () {
+        c.saveClusterStatus.restore();
+        c.loadStep.restore();
+        c.launchPreStartServiceActions.restore();
+      });
+      it('restarts what still has to be restarted, then starts the added services', function () {
+        c.retryStartServices();
+        expect(c.saveClusterStatus.args[0][0].status).to.equal('INSTALLED');
+        expect(c.launchPreStartServiceActions.calledOnce).to.be.true;
+      });
+    });
+
+    describe('#launchStartServicesErrorCallback with an empty answer', function () {
+      beforeEach(function () {
+        sinon.stub(c, 'launchStartServicesSuccessCallback', Em.K);
+      });
+      afterEach(function () {
+        c.launchStartServicesSuccessCallback.restore();
+      });
+      it('every added service is already started', function () {
+        c.launchStartServicesErrorCallback({status: 200}, 'parsererror', '', {});
+        expect(c.launchStartServicesSuccessCallback.calledWith(null)).to.be.true;
+        expect(c.get('startCallFailed')).to.be.false;
+      });
+    });
   });
 
   describe('#hostHasClientsOnly', function () {

@@ -42,7 +42,7 @@ describe('App.AddServiceController', function() {
       res: {
         "context": Em.I18n.t('requestInfo.installServices'),
         "ServiceInfo": {"state": "INSTALLED"},
-        "urlParams": "ServiceInfo/service_name.in(OOZIE,HDFS,YARN,MAPREDUCE2)"
+        "urlParams": "ServiceInfo/service_name.in(OOZIE)"
       }
     }];
     tests.forEach(function(t){
@@ -52,30 +52,71 @@ describe('App.AddServiceController', function() {
     });
   });
 
-  describe('#generateDataForInstallServices with services to cycle', function() {
-    it('stops the installed services to cycle with the added ones', function () {
-      addServiceController.set('content.servicesToCycle', ['HDFS', 'YARN', 'HIVE']);
-      expect(addServiceController.generateDataForInstallServices(['IMPALA', 'KUDU']).urlParams)
-        .to.equal('ServiceInfo/service_name.in(IMPALA,KUDU,HDFS,YARN,HIVE)');
+  describe('#installSelectedServices', function () {
+    beforeEach(function () {
+      // the services being added already exist in the cluster at this point: the step 8 created them
+      sinon.stub(App.Service, 'find').returns([
+        Em.Object.create({serviceName: 'HDFS'}),
+        Em.Object.create({serviceName: 'YARN'}),
+        Em.Object.create({serviceName: 'HIVE'}),
+        Em.Object.create({serviceName: 'IMPALA'}),
+        Em.Object.create({serviceName: 'OOZIE'})
+      ]);
+      sinon.stub(addServiceController, 'getServicesBySelectedSlaves').returns(['IMPALA', 'YARN']);
+      sinon.stub(addServiceController, 'installServicesRequest', Em.K);
+      addServiceController.set('content.services', [
+        Em.Object.create({serviceName: 'HDFS', isInstalled: true, isSelected: true}),
+        Em.Object.create({serviceName: 'YARN', isInstalled: true, isSelected: true}),
+        Em.Object.create({serviceName: 'HIVE', isInstalled: true, isSelected: true}),
+        Em.Object.create({serviceName: 'IMPALA', isInstalled: false, isSelected: true}),
+        Em.Object.create({serviceName: 'OOZIE', isInstalled: false, isSelected: true}),
+        Em.Object.create({serviceName: 'KUDU', isInstalled: false, isSelected: false})
+      ]);
+      addServiceController.installSelectedServices(Em.K);
     });
-    it('stops nothing more when no installed service has to be cycled', function () {
-      addServiceController.set('content.servicesToCycle', []);
-      expect(addServiceController.generateDataForInstallServices(['OOZIE']).urlParams)
-        .to.equal('ServiceInfo/service_name.in(OOZIE)');
+    afterEach(function () {
+      App.Service.find.restore();
+      addServiceController.getServicesBySelectedSlaves.restore();
+      addServiceController.installServicesRequest.restore();
+    });
+    it('installs the added services only, although the step 8 already created them in the cluster: an installed service set to INSTALLED would be stopped', function () {
+      expect(addServiceController.installServicesRequest.calledOnce).to.be.true;
+      expect(addServiceController.installServicesRequest.args[0][1].urlParams).to.equal('ServiceInfo/service_name.in(IMPALA,OOZIE)');
     });
   });
 
-  describe('#getServicesToCycle', function() {
-    var installed = ['HDFS', 'YARN', 'MAPREDUCE2', 'HIVE', 'ZOOKEEPER'];
-    [
-      {selected: ['KNOX'], stale: ['HDFS', 'YARN'], res: ['HDFS', 'YARN'], m: 'installed services with stale started components'},
-      {selected: ['OOZIE'], stale: [], res: ['HDFS', 'YARN', 'MAPREDUCE2'], m: 'Oozie still cycles HDFS, YARN and MapReduce2'},
-      {selected: ['IMPALA', 'KUDU'], stale: ['HDFS'], res: ['HDFS', 'HIVE'], m: 'Impala cycles Hive so the Metastore starts before the Impala catalog'},
-      {selected: ['IMPALA', 'HIVE'], stale: [], res: [], m: 'a service being added is not cycled'},
-      {selected: ['OOZIE'], stale: [], installed: ['ZOOKEEPER'], res: [], m: 'only installed services are cycled'}
-    ].forEach(function (t) {
-      it(t.m, function () {
-        expect(addServiceController.getServicesToCycle(t.selected, t.stale, t.installed || installed)).to.eql(t.res);
+  describe('#installSlavesOfInstalledServices', function () {
+    beforeEach(function () {
+      // IMPALA is being added: the step 8 already created it in the cluster
+      sinon.stub(App.Service, 'find').returns([
+        Em.Object.create({serviceName: 'HDFS'}),
+        Em.Object.create({serviceName: 'YARN'}),
+        Em.Object.create({serviceName: 'IMPALA'})
+      ]);
+      addServiceController.set('content.services', [
+        Em.Object.create({serviceName: 'HDFS', isInstalled: true, isSelected: true}),
+        Em.Object.create({serviceName: 'YARN', isInstalled: true, isSelected: true}),
+        Em.Object.create({serviceName: 'IMPALA', isInstalled: false, isSelected: true})
+      ]);
+      this.slaves = sinon.stub(addServiceController, 'getServicesBySelectedSlaves');
+    });
+    afterEach(function () {
+      App.Service.find.restore();
+      this.slaves.restore();
+    });
+    it('does not send any request without new slaves of installed services', function () {
+      this.slaves.returns(['IMPALA']);
+      addServiceController.installSlavesOfInstalledServices();
+      expect(testHelpers.findAjaxRequest('name', 'common.host_components.update')).to.be.undefined;
+    });
+    it('installs the new slaves of installed services at the host component level', function () {
+      this.slaves.returns(['IMPALA', 'YARN']);
+      addServiceController.installSlavesOfInstalledServices();
+      var args = testHelpers.findAjaxRequest('name', 'common.host_components.update');
+      expect(args[0].data).to.eql({
+        context: Em.I18n.t('requestInfo.installComponents'),
+        urlParams: 'HostRoles/state=INIT&HostRoles/service_name.in(YARN)',
+        HostRoles: {state: 'INSTALLED'}
       });
     });
   });

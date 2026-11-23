@@ -418,89 +418,18 @@ App.AddServiceController = App.WizardController.extend(App.AddSecurityConfigs, {
 
   /**
    * genarates data for ajax request to launch install services
+   * Only services that are not installed yet may be part of it: setting an installed service to INSTALLED stops its
+   * started components, and nothing would start them again if the added services then fail to install or start.
    * @method generateDataForInstallServices
    * @param {Array} selectedServices
    * @returns {{context: *, ServiceInfo: {state: string}, urlParams: string}}
    */
   generateDataForInstallServices: function(selectedServices) {
-    var servicesToCycle = this.get('content.servicesToCycle');
-    if (!servicesToCycle) {
-      servicesToCycle = selectedServices.contains('OOZIE') ? ['HDFS', 'YARN', 'MAPREDUCE2'] : [];
-    }
-    selectedServices = selectedServices.concat(servicesToCycle).uniq();
     return {
       "context": Em.I18n.t('requestInfo.installServices'),
       "ServiceInfo": {"state": "INSTALLED"},
       "urlParams": "ServiceInfo/service_name.in(" + selectedServices.join(',') + ")"
     };
-  },
-
-  /**
-   * Installed services the added services change the configuration of: the install stops them and the start of the
-   * added services starts them again, in the role command order (NameNodes, DataNodes and ResourceManagers before the
-   * Hive Metastore, the Hive Metastore before the Impala catalog).
-   * @type {string[]}
-   */
-  servicesToCycleCandidates: ['HDFS', 'YARN', 'MAPREDUCE2', 'HIVE'],
-
-  /**
-   * @param {string[]} selectedServices services being added
-   * @param {string[]} staleServices installed services with started components whose configuration is stale
-   * @param {string[]} installedServices
-   * @returns {string[]}
-   * @method getServicesToCycle
-   */
-  getServicesToCycle: function (selectedServices, staleServices, installedServices) {
-    var servicesToCycle = staleServices.slice();
-    if (selectedServices.contains('OOZIE')) {
-      servicesToCycle = servicesToCycle.concat(['HDFS', 'YARN', 'MAPREDUCE2']);
-    }
-    if (selectedServices.contains('IMPALA')) {
-      // the Impala advisor writes hive-site: the Hive Metastore must start with it before the Impala catalog
-      servicesToCycle.push('HIVE');
-    }
-    return servicesToCycle.uniq().filter(function (serviceName) {
-      return installedServices.contains(serviceName) && !selectedServices.contains(serviceName);
-    });
-  },
-
-  /**
-   * Find the installed services to stop and start with the added ones, once their configuration is saved.
-   * @param {string[]} selectedServices
-   * @returns {$.Deferred}
-   * @method loadServicesToCycle
-   */
-  loadServicesToCycle: function (selectedServices) {
-    var self = this;
-    var dfd = $.Deferred();
-    var installedServices = App.Service.find().mapProperty('serviceName');
-    var candidates = this.get('servicesToCycleCandidates').filter(function (serviceName) {
-      return installedServices.contains(serviceName);
-    });
-    var done = function (staleServices) {
-      var servicesToCycle = self.getServicesToCycle(selectedServices, staleServices, installedServices);
-      self.set('content.servicesToCycle', servicesToCycle);
-      self.setDBProperty('servicesToCycle', servicesToCycle);
-      dfd.resolve(servicesToCycle);
-    };
-    if (!candidates.length) {
-      done([]);
-      return dfd.promise();
-    }
-    App.ajax.send({
-      name: 'service.addService.startedStaleHostComponents',
-      sender: this,
-      data: {
-        services: candidates.join(',')
-      }
-    }).done(function (data) {
-      done(((data && data.items) || []).map(function (item) {
-        return item.HostRoles.service_name;
-      }).uniq());
-    }).fail(function () {
-      done([]);
-    });
-    return dfd.promise();
   },
 
   /**
@@ -512,7 +441,9 @@ App.AddServiceController = App.WizardController.extend(App.AddSecurityConfigs, {
     var self = this;
     this.set('content.cluster.oldRequestsId', []);
     this.installAdditionalClients().done(function () {
-      self.installSelectedServices(callback);
+      self.installSlavesOfInstalledServices().always(function () {
+        self.installSelectedServices(callback);
+      });
     });
   },
 
@@ -522,13 +453,43 @@ App.AddServiceController = App.WizardController.extend(App.AddSecurityConfigs, {
    * @method installSelectedServices
    */
   installSelectedServices: function (callback) {
-    var self = this;
     var name = 'common.services.update';
+    // installed = installed before this wizard (content.services): at this point the services being added already
+    // exist in the cluster, created by the step 8, and App.Service lists them too
+    var installedServices = this.get('content.services').filterProperty('isInstalled', true).mapProperty('serviceName');
     var selectedServices = this.get('content.services').filterProperty('isInstalled', false).filterProperty('isSelected', true).mapProperty('serviceName');
     var dependentServices = this.getServicesBySelectedSlaves();
-    this.loadServicesToCycle(selectedServices).always(function () {
-      var data = self.generateDataForInstallServices(selectedServices.concat(dependentServices));
-      self.installServicesRequest(name, data, callback.bind(self));
+    var servicesToInstall = selectedServices.concat(dependentServices).uniq().filter(function (serviceName) {
+      return !installedServices.contains(serviceName);
+    });
+    var data = this.generateDataForInstallServices(servicesToInstall);
+    this.installServicesRequest(name, data, callback.bind(this));
+  },
+
+  /**
+   * Install the slave components the user added to installed services (dependencies of the added services) at the
+   * host component level, so that the started components of these services are left running.
+   * The step 9 starts them with the restart of the installed services, before the added services are started.
+   * @returns {$.Deferred}
+   * @method installSlavesOfInstalledServices
+   */
+  installSlavesOfInstalledServices: function () {
+    // installed before this wizard, see installSelectedServices
+    var installedServices = this.get('content.services').filterProperty('isInstalled', true).mapProperty('serviceName');
+    var services = this.getServicesBySelectedSlaves().filter(function (serviceName) {
+      return installedServices.contains(serviceName);
+    });
+    if (!services.length) {
+      return $.Deferred().resolve().promise();
+    }
+    return App.ajax.send({
+      name: 'common.host_components.update',
+      sender: this,
+      data: {
+        context: Em.I18n.t('requestInfo.installComponents'),
+        urlParams: 'HostRoles/state=INIT&HostRoles/service_name.in(' + services.join(',') + ')',
+        HostRoles: {state: 'INSTALLED'}
+      }
     });
   },
 
