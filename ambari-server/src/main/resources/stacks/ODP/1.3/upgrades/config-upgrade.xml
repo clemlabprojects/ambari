@@ -45,8 +45,10 @@
         <changes>
           <definition xsi:type="configure" id="odp_1_2_4_0_kafka_3_broker_transaction">
             <type>kafka-broker</type>
-            <set key="transaction.state.log.min.isr" value="2"/>
-            <set key="transaction.state.log.replication.factor" value="3"/>
+            <!-- only when the cluster does not define them: values set by the operator are kept (1 and 1 on a
+                 single broker, where 2 in-sync replicas of 3 can never be reached) -->
+            <set key="transaction.state.log.min.isr" value="2" if-type="kafka-broker" if-key="transaction.state.log.min.isr" if-key-state="absent"/>
+            <set key="transaction.state.log.replication.factor" value="3" if-type="kafka-broker" if-key="transaction.state.log.replication.factor" if-key-state="absent"/>
           </definition>
           <definition xsi:type="configure" id="odp_1_3_2_0_kafka_pin_protocol_3_8" summary="Pin Kafka IBP=3.8 so 3.9 brokers stay wire-compatible with not-yet-restarted 3.8 brokers during the rolling restart.">
             <type>kafka-broker</type>
