@@ -135,6 +135,10 @@ class TestOozieSecondaryJava(unittest.TestCase):
       params.target = "/jdbc.jar"
       params.jdbc_driver_name = "test.Driver"
       params.upgrade_direction = "upgrade"
+      # used by the Spark 3 sharelib step of the start
+      params.hadoop_conf_dir = "/etc/hadoop/conf"
+      params.hdfs_share_dir = "/user/oozie/share"
+      params.kinit_if_needed = ""
       for action in ("start", "stop"):
         with self.subTest(version=version, action=action), Environment(test_mode=True) as env, \
              patch.dict(sys.modules, {"params": params}), patch.object(service, "Execute") as execute, \

@@ -301,7 +301,7 @@ class HueValidator(service_advisor.ServiceAdvisor):
         items.append({"config-name": "hue_db_options",
                       "item": self.getErrorItem("Must be a JSON object, for instance {\"sslmode\": \"verify-full\"}.")})
     # Hue takes a single WebHDFS URL: without HttpFS it is the first NameNode, which fails while that one is standby
-    hdfs_site = services["configurations"].get("hdfs-site", {}).get("properties", {})
+    hdfs_site = services.get("configurations", {}).get("hdfs-site", {}).get("properties", {})
     nameservice = (hdfs_site.get("dfs.internal.nameservices") or hdfs_site.get("dfs.nameservices") or "").split(",")[0]
     if nameservice and len(hdfs_site.get("dfs.ha.namenodes." + nameservice, "").split(",")) > 1 \
         and not self.getComponentHostNames(services, "HDFS", "HTTPFS_GATEWAY"):
