@@ -22,7 +22,7 @@ error_log {{polaris_log_dir}}/polaris-console-error.log warn;
 events { worker_connections 64; }
 
 http {
-    include /etc/nginx/mime.types;
+    include {{polaris_console_nginx_mime_types}};
     default_type application/octet-stream;
     sendfile on;
     access_log {{polaris_log_dir}}/polaris-console-access.log;

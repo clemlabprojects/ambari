@@ -567,6 +567,16 @@ polaris_console_port = int(default("/configurations/polaris-env/polaris_console_
 polaris_console_pid_file = format("{polaris_pid_dir}/polaris-console.pid")
 
 polaris_console_nginx_conf = format("{polaris_conf_dir}/nginx-console.conf")
+# nginx bundled in the Polaris tools package (ODP 1.3.2.0 and later), run with its own prefix and configuration.
+# Older Polaris tools packages depend on the distribution nginx: use it when no bundled one is installed.
+polaris_console_nginx_home = format("{polaris_console_home}/nginx")
+if os.path.isfile(os.path.join(polaris_console_nginx_home, "sbin", "nginx")):
+  polaris_console_nginx_bin = os.path.join(polaris_console_nginx_home, "sbin", "nginx")
+  polaris_console_nginx_mime_types = os.path.join(polaris_console_nginx_home, "conf", "mime.types")
+else:
+  polaris_console_nginx_bin = "nginx"
+  polaris_console_nginx_mime_types = "/etc/nginx/mime.types"
+polaris_console_nginx_prefix = format("{polaris_pid_dir}/")
 
 polaris_console_start_command = default("/configurations/polaris-env/polaris_console_start_command", "").strip()
 if not polaris_console_start_command:
