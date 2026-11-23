@@ -750,6 +750,10 @@ App.WizardStep7Controller = Em.Controller.extend(App.ServerValidatorMixin, App.E
       var service = item.get('serviceName');
       if (!servicesToBeInstalled.contains(service)) return false;
       var name = item.get('name');
+      // A descriptor property named with a variable (hadoop.proxyuser.${hue-env/hue_user}.groups) is not a property of
+      // the config type: the server resolves the variable and sets the real property when it configures Kerberos for
+      // the service. Saved as it is, its name is cut at the '/' (hadoop.proxyuser.${hue-env).
+      if (/\$\{[^}]*\}/.test(name)) return false;
       var filename = Em.get(item, 'filename');
       var property = configs.filterProperty('serviceName', service).findProperty('name', name);
       var propertyObj = {

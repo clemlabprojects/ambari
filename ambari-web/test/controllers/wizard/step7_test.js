@@ -1560,6 +1560,15 @@ describe('App.InstallerStep7Controller', function () {
         expect(configs.findProperty('name', 'prop1')[test.attr]).to.be.eql(test.val);
       });
     });
+
+    it('a descriptor property named with a variable is left to the server', function() {
+      var stepConfigs = [];
+      installerStep7Controller.addKerberosDescriptorConfigs(stepConfigs, [
+        Em.Object.create({ name: 'hadoop.proxyuser.${s1-env/s1_user}.groups', filename: 'core-site', serviceName: 's1', value: '*'}),
+        Em.Object.create({ name: 'hadoop.proxyuser.s1.hosts', filename: 'core-site', serviceName: 's1', value: '*'})
+      ]);
+      expect(stepConfigs.mapProperty('name')).to.eql(['hadoop.proxyuser.s1.hosts']);
+    });
   });
 
   describe('#addHawqConfigsOnNnHa', function () {
