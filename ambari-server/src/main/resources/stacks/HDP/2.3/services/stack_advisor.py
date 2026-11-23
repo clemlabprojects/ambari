@@ -131,10 +131,10 @@ class HDP23StackAdvisor(HDP22StackAdvisor):
     jvmGCParams = "-XX:+UseParallelGC"
     if "ambari-server-properties" in services and "java.home" in services["ambari-server-properties"]:
       # JDK8 needs different parameters
-      match = re.match(".*\/jdk(1\.\d+)[\-\_\.][^/]*$", services["ambari-server-properties"]["java.home"])
+      match = re.match(".*\\/jdk(1\\.\\d+)[\\-\\_\\.][^/]*$", services["ambari-server-properties"]["java.home"])
       if match and len(match.groups()) > 0:
         # Is version >= 1.8
-        versionSplits = re.split("\.", match.group(1))
+        versionSplits = re.split("\\.", match.group(1))
         if versionSplits and len(versionSplits) > 1 and int(versionSplits[0]) > 0 and int(versionSplits[1]) > 7:
           jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
     # Note: Same calculation is done in 2.6/stack_advisor::recommendTezConfigurations() for 'tez.task.launch.cmd-opts',
@@ -209,10 +209,10 @@ class HDP23StackAdvisor(HDP22StackAdvisor):
     jvmGCParams = "-XX:+UseParallelGC"
     if "ambari-server-properties" in services and "java.home" in services["ambari-server-properties"]:
       # JDK8 needs different parameters
-      match = re.match(".*\/jdk(1\.\d+)[\-\_\.][^/]*$", services["ambari-server-properties"]["java.home"])
+      match = re.match(".*\\/jdk(1\\.\\d+)[\\-\\_\\.][^/]*$", services["ambari-server-properties"]["java.home"])
       if match and len(match.groups()) > 0:
         # Is version >= 1.8
-        versionSplits = re.split("\.", match.group(1))
+        versionSplits = re.split("\\.", match.group(1))
         if versionSplits and len(versionSplits) > 1 and int(versionSplits[0]) > 0 and int(versionSplits[1]) > 7:
           jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
     putHiveSiteProperty('hive.tez.java.opts', "-server -Djava.net.preferIPv4Stack=true -XX:NewRatio=8 -XX:+UseNUMA " + jvmGCParams + " -XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps")

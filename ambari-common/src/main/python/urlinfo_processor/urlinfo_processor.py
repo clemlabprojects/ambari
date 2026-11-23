@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 
 import sys
 
-json_stack_version_re = re.compile("(\S*)-((\d\.*)+)")
+json_stack_version_re = re.compile("(\\S*)-((\\d\\.*)+)")
 
 family_map = {"redhat6": "centos6",
               "redhat7": "centos7"}

@@ -2167,7 +2167,7 @@ class DefaultStackAdvisor(StackAdvisor):
       size = len(dependencies)
       for config in allDependencies:
         property = {
-          "type": re.sub('\.xml$', '', config['StackConfigurations']['type']),
+          "type": re.sub('\\.xml$', '', config['StackConfigurations']['type']),
           "name": config['StackConfigurations']['property_name']
         }
         if property in dependencies or property in changedConfigs:
@@ -3497,13 +3497,13 @@ class DefaultStackAdvisor(StackAdvisor):
 
   @classmethod
   def checkXmxValueFormat(cls, value):
-    p = re.compile('-Xmx(\d+)(b|k|m|g|p|t|B|K|M|G|P|T)?')
+    p = re.compile('-Xmx(\\d+)(b|k|m|g|p|t|B|K|M|G|P|T)?')
     matches = p.findall(value)
     return len(matches) == 1
 
   @classmethod
   def getXmxSize(cls, value):
-    p = re.compile("-Xmx(\d+)(.?)")
+    p = re.compile("-Xmx(\\d+)(.?)")
     result = p.findall(value)[0]
     if len(result) > 1:
       # result[1] - is a space or size formatter (b|k|m|g etc)
@@ -3532,7 +3532,7 @@ class DefaultStackAdvisor(StackAdvisor):
   @classmethod
   def to_number(cls, s):
     try:
-      return int(re.sub("\D", "", s))
+      return int(re.sub("\\D", "", s))
     except ValueError:
       return None
 

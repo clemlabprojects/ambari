@@ -539,10 +539,10 @@ class HDP26StackAdvisor(HDP25StackAdvisor):
     jvmGCParams = "-XX:+UseParallelGC"
     if "ambari-server-properties" in services and "java.home" in services["ambari-server-properties"]:
       # JDK8 needs different parameters
-      match = re.match(".*\/jdk(1\.\d+)[\-\_\.][^/]*$", services["ambari-server-properties"]["java.home"])
+      match = re.match(".*\\/jdk(1\\.\\d+)[\\-\\_\\.][^/]*$", services["ambari-server-properties"]["java.home"])
       if match and len(match.groups()) > 0:
         # Is version >= 1.8
-        versionSplits = re.split("\.", match.group(1))
+        versionSplits = re.split("\\.", match.group(1))
         if versionSplits and len(versionSplits) > 1 and int(versionSplits[0]) > 0 and int(versionSplits[1]) > 7:
           jvmGCParams = "-XX:+UseG1GC -XX:+ResizeTLAB"
     tez_jvm_opts = "-XX:+PrintGCDetails -verbose:gc -XX:+PrintGCTimeStamps -XX:+UseNUMA "

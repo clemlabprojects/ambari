@@ -71,6 +71,6 @@ def is_component_running(port, process):
   """
   Check if the process is running on the specified port
   """
-  cmd = "netstat -tupln | egrep ':{0}\s' | egrep {1}".format(port, process)
+  cmd = "netstat -tupln | egrep ':{0}\\s' | egrep {1}".format(port, process)
   rc, op= call(cmd, timeout=60)
   return rc == 0

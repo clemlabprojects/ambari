@@ -480,10 +480,10 @@ class TezRecommender(service_advisor.ServiceAdvisor):
   def __getJdkMajorVersion(self, javaHome):
     jdkVersion = subprocess.check_output([javaHome + "/bin/java", "-version"], stderr=subprocess.STDOUT)
     jdkVersion = jdkVersion.decode()  # decode bytes to string
-    pattern = '\"(\d+\.\d+).*\"'
+    pattern = '\"(\\d+\\.\\d+).*\"'
     majorVersionString = re.search(pattern, jdkVersion).groups()[0]
     if majorVersionString:
-      return re.split("\.", majorVersionString)
+      return re.split("\\.", majorVersionString)
     else:
       return None
 

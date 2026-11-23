@@ -40,26 +40,26 @@
         import re
         # List of tuple (Match pattern, Replace pattern, Exclusion pattern)
         
-        var_re  = ((re.compile(r"(u|user)\.is_authenticated"), r"\1.is_authenticated()", None),
-                  (re.compile(r"\.non_field_errors"), r".non_field_errors()", None),
-                  (re.compile(r"\.label_tag"), r".label_tag()", None),
-                  (re.compile(r"\.as_dl"), r".as_dl()", None),
-                  (re.compile(r"\.as_table"), r".as_table()", None),
-                  (re.compile(r"\.as_widget"), r".as_widget()", None),
-                  (re.compile(r"\.as_hidden"), r".as_hidden()", None),
+        var_re  = ((re.compile(r"(u|user)\\.is_authenticated"), r"\1.is_authenticated()", None),
+                  (re.compile(r"\\.non_field_errors"), r".non_field_errors()", None),
+                  (re.compile(r"\\.label_tag"), r".label_tag()", None),
+                  (re.compile(r"\\.as_dl"), r".as_dl()", None),
+                  (re.compile(r"\\.as_table"), r".as_table()", None),
+                  (re.compile(r"\\.as_widget"), r".as_widget()", None),
+                  (re.compile(r"\\.as_hidden"), r".as_hidden()", None),
                   
-                  (re.compile(r"\.get_([0-9_\w]+)_url"), r".get_\1_url()", None),
-                  (re.compile(r"\.url"), r".url()", re.compile(r"(form|calendar).url")),
-                  (re.compile(r"\.get_([0-9_\w]+)_display"), r".get_\1_display()", None),
-                  (re.compile(r"loop\.counter"), r"loop.index", None),
-                  (re.compile(r"loop\.revcounter"), r"loop.revindex", None),
-                  (re.compile(r"request\.GET\.([0-9_\w]+)"), r"request.GET.get('\1', '')", None),
-                  (re.compile(r"request\.get_host"), r"request.get_host()", None),
+                  (re.compile(r"\\.get_([0-9_\\w]+)_url"), r".get_\1_url()", None),
+                  (re.compile(r"\\.url"), r".url()", re.compile(r"(form|calendar).url")),
+                  (re.compile(r"\\.get_([0-9_\\w]+)_display"), r".get_\1_display()", None),
+                  (re.compile(r"loop\\.counter"), r"loop.index", None),
+                  (re.compile(r"loop\\.revcounter"), r"loop.revindex", None),
+                  (re.compile(r"request\\.GET\\.([0-9_\\w]+)"), r"request.GET.get('\1', '')", None),
+                  (re.compile(r"request\\.get_host"), r"request.get_host()", None),
                   
-                  (re.compile(r"\.all(?!_)"), r".all()", None),
-                  (re.compile(r"\.all\.0"), r".all()[0]", None),
-                  (re.compile(r"\.([0-9])($|\s+)"), r"[\1]\2", None),
-                  (re.compile(r"\.items"), r".items()", None),
+                  (re.compile(r"\\.all(?!_)"), r".all()", None),
+                  (re.compile(r"\\.all\\.0"), r".all()[0]", None),
+                  (re.compile(r"\\.([0-9])($|\\s+)"), r"[\1]\2", None),
+                  (re.compile(r"\\.items"), r".items()", None),
         )
         writer = Writer(var_re=var_re)
         

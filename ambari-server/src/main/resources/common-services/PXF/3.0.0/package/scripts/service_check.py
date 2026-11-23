@@ -103,7 +103,7 @@ class PXFServiceCheck(Script):
 
     import re
     # Extract the v14 from the output
-    match =  re.search('.*(v\d*).*', response)
+    match =  re.search('.*(v\\d*).*', response)
     if match:
       return match.group(1)
 

@@ -355,8 +355,8 @@ def password_validation(password):
   import params
   if password.strip() == "":
     raise Fail("Blank password is not allowed for Bind user. Please enter valid password.")
-  if re.search("[\\\`'\"]",password):
-    raise Fail("LDAP/AD bind password contains one of the unsupported special characters like \" ' \ `")
+  if re.search("[\\\\`'\"]",password):
+    raise Fail("LDAP/AD bind password contains one of the unsupported special characters like \" ' \\ `")
   else:
     Logger.info("password validated")
 
@@ -907,11 +907,11 @@ def validate_user_password(password_property = None):
 
   for index in range(len(ranger_password_properties)):
     password = params.config['configurations']['ranger-env'][ranger_password_properties[index]]
-    if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', password)) or bool(re.search('[\\\`"\']', password)):
+    if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', password)) or bool(re.search('[\\\\`"\']', password)):
       validation.append(ranger_password_properties[index])
 
   if len(validation) > 0:
-    raise Fail("Password validation failed for : " + ", ".join(validation) + ". Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are \" ' \ `")
+    raise Fail("Password validation failed for : " + ", ".join(validation) + ". Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are \" ' \\ `")
 
 def update_dot_jceks_crc_ownership(credential_provider_path, user, group):
 

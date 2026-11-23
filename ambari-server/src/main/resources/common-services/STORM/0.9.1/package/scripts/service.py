@@ -42,7 +42,7 @@ def service(name, action = 'start'):
   if name == 'ui':
     process_grep = "storm.ui.core$"
   elif name == "rest_api":
-    process_grep = format("{rest_lib_dir}/storm-rest-.*\.jar$")
+    process_grep = format("{rest_lib_dir}/storm-rest-.*\\.jar$")
   else:
     process_grep = format("storm.daemon.{name}$")
 
@@ -55,7 +55,7 @@ def service(name, action = 'start'):
   if action == "start":
     if name == "rest_api":
       process_cmd = format(
-        "{storm_env} ; java -jar {rest_lib_dir}/`ls {rest_lib_dir} | grep -wE storm-rest-[0-9.-]+\.jar` server")
+        "{storm_env} ; java -jar {rest_lib_dir}/`ls {rest_lib_dir} | grep -wE storm-rest-[0-9.-]+\\.jar` server")
       cmd = format(
         "{process_cmd} {rest_api_conf_file} > {log_dir}/restapi.log 2>&1")
     else:

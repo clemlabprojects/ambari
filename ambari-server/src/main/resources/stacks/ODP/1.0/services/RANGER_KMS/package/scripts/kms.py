@@ -47,8 +47,8 @@ def password_validation(password, key):
   import params
   if password.strip() == "":
     raise Fail("Blank password is not allowed for {0} property. Please enter valid password.".format(key))
-  if re.search("[\\\`'\"]",password):
-    raise Fail("{0} password contains one of the unsupported special characters like \" ' \ `".format(key))
+  if re.search("[\\\\`'\"]",password):
+    raise Fail("{0} password contains one of the unsupported special characters like \" ' \\ `".format(key))
   else:
     Logger.info("Password validated")
 

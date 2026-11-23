@@ -28,7 +28,7 @@ def generate_hawq_process_status_cmd(component_name, port):
   Generate a string of command to check if hawq postgres / gpsyncmaster process is running
   """
   process_name = hawq_constants.COMPONENT_ATTRIBUTES_MAP[component_name]['process_name']
-  return "netstat -tupln | egrep ':{0}\s' | egrep {1}".format(port, process_name)
+  return "netstat -tupln | egrep ':{0}\\s' | egrep {1}".format(port, process_name)
 
 
 def create_dir_as_hawq_user(directory):

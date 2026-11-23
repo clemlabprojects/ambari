@@ -774,17 +774,17 @@ def getSiteProperties(configurations, siteName):
 
 def to_number(s):
   try:
-    return int(re.sub("\D", "", s))
+    return int(re.sub("\\D", "", s))
   except ValueError:
     return None
 
 def checkXmxValueFormat(value):
-  p = re.compile('-Xmx(\d+)(b|k|m|g|p|t|B|K|M|G|P|T)?')
+  p = re.compile('-Xmx(\\d+)(b|k|m|g|p|t|B|K|M|G|P|T)?')
   matches = p.findall(value)
   return len(matches) == 1
 
 def getXmxSize(value):
-  p = re.compile("-Xmx(\d+)(.?)")
+  p = re.compile("-Xmx(\\d+)(.?)")
   result = p.findall(value)[0]
   if len(result) > 1:
     # result[1] - is a space or size formatter (b|k|m|g etc)

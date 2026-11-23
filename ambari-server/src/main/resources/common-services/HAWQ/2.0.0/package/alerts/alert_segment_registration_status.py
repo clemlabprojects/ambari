@@ -113,7 +113,7 @@ def get_segment_list_ambari():
     with open(HAWQ_SLAVES_FILE, "r") as slaves_file:
       slaves = slaves_file.read()
     #regex to read all non empty lines in a file.
-    return [segment.lower() for segment in re.findall('\S+' , slaves)]
+    return [segment.lower() for segment in re.findall('\\S+' , slaves)]
   except Exception as ex:
      logger.error("[Alert HAWQ] Get Segment list from Slaves : Could not read slaves from {0}".format(HAWQ_SLAVES_FILE))
      raise ex

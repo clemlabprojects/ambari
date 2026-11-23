@@ -85,7 +85,7 @@ JDK_VALID_CHOICES = "^[{0}{1:d}]$"
 # implemetation for 7 or 8
 #JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed 's/.*version ".*\.\(.*\)\..*"/\\1/; 1q' 2>&1"""
 # implentation for 7,8, 11, 17 and 21
-JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed -n 's/.*"\([^"]*\)".*/\\1/p' 2>&1"""
+JDK_VERSION_CHECK_CMD = """{0} -version 2>&1 | grep -i version | sed -n 's/.*"\\([^"]*\\)".*/\\1/p' 2>&1"""
 AMBARI_SUPPORTED_JAVA_VERSIONS = (17, 21)
 AMBARI_SUPPORTED_JAVA_VERSIONS_STR = " or ".join([str(version) for version in AMBARI_SUPPORTED_JAVA_VERSIONS])
 SUPPORTED_JDK_VERSIONS = (8, 11, 17, 21)
@@ -306,7 +306,7 @@ class AmbariUserChecksWindows(AmbariUserChecks):
       return UserHelper.ACTION_FAILED
 
     print_info_msg("User configuration is done.")
-    print_warning_msg("When using non SYSTEM user make sure that your user has read\write access to log directories and "
+    print_warning_msg("When using non SYSTEM user make sure that your user has read\\write access to log directories and "
                       "all server directories. In case of integrated authentication for SQL Server make sure that your "
                       "user is properly configured to access the ambari database.")
 

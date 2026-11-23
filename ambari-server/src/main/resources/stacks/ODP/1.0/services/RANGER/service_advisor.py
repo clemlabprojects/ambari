@@ -916,7 +916,7 @@ class RangerValidator(service_advisor.ServiceAdvisor):
     for password_property in ranger_password_properties:
       if password_property in ranger_env_properties:
         password = ranger_env_properties[password_property]
-        if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', password)) or bool(re.search('[\\\`"\']', password)):
-          validationItems.append({"config-name": password_property, "item": self.getNotApplicableItem("Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are  \" ' \ `")})
+        if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', password)) or bool(re.search('[\\\\`"\']', password)):
+          validationItems.append({"config-name": password_property, "item": self.getNotApplicableItem("Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are  \" ' \\ `")})
 
     return self.toConfigurationValidationProblems(validationItems, "ranger-env")

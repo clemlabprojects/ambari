@@ -77,7 +77,7 @@ class Dummy(Script):
     """
     component_name = self.get_component_name()
     repo_info = str(default("/hostLevelParams/repoInfo", "1.1.1.1-1"))
-    matches = re.findall(r"([\d\.]+\-\d+)", repo_info)
+    matches = re.findall(r"([\\d\\.]+\\-\\d+)", repo_info)
     version = matches[0] if matches and len(matches) > 0 else "1.1.1.1-1"
 
     from resource_management.libraries.functions import stack_tools

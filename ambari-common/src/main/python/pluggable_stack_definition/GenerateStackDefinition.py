@@ -503,7 +503,7 @@ class GeneratorHelper(object):
             # process configuration xml
             target = process_config_xml(target, self.config_data)
           # process upgrade-x.x.xml
-          _upgrade_re = re.compile('upgrade-(.*)\.xml')
+          _upgrade_re = re.compile('upgrade-(.*)\\.xml')
           result = re.search(_upgrade_re, target)
           if result:
             target_version = result.group(1)

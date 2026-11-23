@@ -234,10 +234,10 @@ def copy_toolkit_scripts(toolkit_files_dir, toolkit_tmp_dir, user, group, upgrad
         nifiToolkitDirTmpPath = os.path.join(toolkit_tmp_dir, dir)
 
     if not sudo.path_isdir(nifiToolkitDirTmpPath) or not (upgrade_type is None):
-      os.system("\cp -r " + nifiToolkitDirFilesPath + " " + toolkit_tmp_dir)
+      os.system("\\cp -r " + nifiToolkitDirFilesPath + " " + toolkit_tmp_dir)
       Directory(nifiToolkitDirTmpPath, owner=user, group=group, create_parents=False, recursive_ownership=True,
                 cd_access="a", mode=0o755)
-      os.system("\/var/lib/ambari-agent/ambari-sudo.sh chmod -R 755 " + nifiToolkitDirTmpPath)
+      os.system("\\/var/lib/ambari-agent/ambari-sudo.sh chmod -R 755 " + nifiToolkitDirTmpPath)
   else:
     Logger.info("Changing owner of package files")
     package_toolkit_dir = os.path.join(params.stack_root, 'current', 'nifi-toolkit')

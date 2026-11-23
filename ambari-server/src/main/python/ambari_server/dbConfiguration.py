@@ -40,7 +40,7 @@ DB_STATUS_RUNNING_DEFAULT = "running"
 SETUP_DB_CONNECT_TIMEOUT = 5
 SETUP_DB_CONNECT_ATTEMPTS = 3
 
-USERNAME_PATTERN = "^[a-zA-Z_][a-zA-Z0-9_\-]*$"
+USERNAME_PATTERN = "^[a-zA-Z_][a-zA-Z0-9_\\-]*$"
 PASSWORD_PATTERN = "^[a-zA-Z0-9_-]*$"
 CUSTOM_JDBC_DB_NAMES = ["postgres", "mysql", "mssql", "oracle", "hsqldb", "sqlanywhere", "bdb"]
 DATABASE_NAMES = ["postgres", "oracle", "mysql", "mssql", "sqlanywhere", "bdb"]

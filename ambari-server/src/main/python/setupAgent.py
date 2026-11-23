@@ -197,8 +197,8 @@ def checkVerbose():
 @OsFamilyFuncImpl(OsFamilyImpl.DEFAULT)
 def checkVerbose():
   verbose = False
-  cmds = ["bash", "-c", "ps aux | grep 'AmbariAgent.py' | grep ' \-v'"]
-  cmdl = ["bash", "-c", "ps aux | grep 'AmbariAgent.py' | grep ' \--verbose'"]
+  cmds = ["bash", "-c", "ps aux | grep 'AmbariAgent.py' | grep ' \\-v'"]
+  cmdl = ["bash", "-c", "ps aux | grep 'AmbariAgent.py' | grep ' \\--verbose'"]
   if execOsCommand(cmds)["exitstatus"] == 0 or execOsCommand(cmdl)["exitstatus"] == 0:
     verbose = True
   return verbose
@@ -239,20 +239,20 @@ def findNearestAgentPackageVersion(projectVersion):
     projectVersion = "  "
   if OSCheck.is_suse_family():
     Command = ["bash", "-c", "zypper --no-gpg-checks --non-interactive -q search -s --match-exact ambari-agent | grep '" + projectVersion +
-                                 "' | cut -d '|' -f 4 | head -n1 | sed -e 's/-\w[^:]*//1' "]
+                                 "' | cut -d '|' -f 4 | head -n1 | sed -e 's/-\\w[^:]*//1' "]
   elif OSCheck.is_windows_family():
     listPackagesCommand = ["cmd", "/c", "choco list ambari-agent --pre --all | findstr " + projectVersion + " > agentPackages.list"]
     execOsCommand(listPackagesCommand)
     Command = ["cmd", "/c", "powershell",  "get-content agentPackages.list | select-object -last 1 | foreach-object {$_ -replace 'ambari-agent ', ''}"]
   elif OSCheck.is_ubuntu_family():
     if projectVersion == "  ":
-      Command = ["bash", "-c", "apt-cache -q show ambari-agent |grep 'Version\:'|cut -d ' ' -f 2|tr -d '\\n'|sed -s 's/[-|~][A-Za-z0-9]*//'"]
+      Command = ["bash", "-c", "apt-cache -q show ambari-agent |grep 'Version\\:'|cut -d ' ' -f 2|tr -d '\\n'|sed -s 's/[-|~][A-Za-z0-9]*//'"]
     else:
-      Command = ["bash", "-c", "apt-cache -q show ambari-agent |grep 'Version\:'|cut -d ' ' -f 2|grep '" +
+      Command = ["bash", "-c", "apt-cache -q show ambari-agent |grep 'Version\\:'|cut -d ' ' -f 2|grep '" +
                projectVersion + "'|tr -d '\\n'|sed -s 's/[-|~][A-Za-z0-9]*//'"]
   else:
     Command = ["bash", "-c", "yum -q list all ambari-agent | grep '" + projectVersion +
-                              "' | sed -re 's/\s+/ /g' | awk -F ' ' '{print $2}'  | awk -F '-' '{print $1}' | head -n1 | sed -e 's/-\w[^:]*//1' "]
+                              "' | sed -re 's/\\s+/ /g' | awk -F ' ' '{print $2}'  | awk -F '-' '{print $1}' | head -n1 | sed -e 's/-\\w[^:]*//1' "]
   return execOsCommand(Command)
 
 def isAgentPackageAlreadyInstalled(projectVersion):
@@ -271,15 +271,15 @@ def isAgentPackageAlreadyInstalled(projectVersion):
 def getAvailableAgentPackageVersions():
   if OSCheck.is_suse_family():
     Command = ["bash", "-c",
-        "zypper --no-gpg-checks --non-interactive -q search -s --match-exact ambari-agent | grep ambari-agent | sed -re 's/\s+/ /g' | cut -d '|' -f 4 | tr '\\n' ', ' | sed -s 's/[-|~][A-Za-z0-9]*//g'"]
+        "zypper --no-gpg-checks --non-interactive -q search -s --match-exact ambari-agent | grep ambari-agent | sed -re 's/\\s+/ /g' | cut -d '|' -f 4 | tr '\\n' ', ' | sed -s 's/[-|~][A-Za-z0-9]*//g'"]
   elif OSCheck.is_windows_family():
     Command = ["cmd", "/c", "choco list ambari-agent --pre --all | findstr ambari-agent"]
   elif OSCheck.is_ubuntu_family():
     Command = ["bash", "-c",
-        "apt-cache -q show ambari-agent|grep 'Version\:'|cut -d ' ' -f 2| tr '\\n' ', '|sed -s 's/[-|~][A-Za-z0-9]*//g'"]
+        "apt-cache -q show ambari-agent|grep 'Version\\:'|cut -d ' ' -f 2| tr '\\n' ', '|sed -s 's/[-|~][A-Za-z0-9]*//g'"]
   else:
     Command = ["bash", "-c",
-        "yum -q list all ambari-agent | grep -E '^ambari-agent' | sed -re 's/\s+/ /g' | cut -d ' ' -f 2 | tr '\\n' ', ' | sed -s 's/[-|~][A-Za-z0-9]*//g'"]
+        "yum -q list all ambari-agent | grep -E '^ambari-agent' | sed -re 's/\\s+/ /g' | cut -d ' ' -f 2 | tr '\\n' ', ' | sed -s 's/[-|~][A-Za-z0-9]*//g'"]
   return execOsCommand(Command)
 
 def checkServerReachability(host, port):

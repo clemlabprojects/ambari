@@ -29,7 +29,7 @@ def escape_yaml_property(value):
     unquouted = True
 
   # if is list [a,b,c]
-  if re.match('^\w*\[.+\]\w*$', value):
+  if re.match('^\\w*\\[.+\\]\\w*$', value):
     unquouted = True
     
   try:

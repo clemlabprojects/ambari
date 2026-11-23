@@ -136,7 +136,7 @@ class ServiceCheckDefault(ServiceCheck):
                                           user=params.smokeuser,
                                           )
 
-    m = re.search("appTrackingUrl=(.*),\s", out)
+    m = re.search("appTrackingUrl=(.*),\\s", out)
     app_url = m.group(1)
 
     splitted_app_url = str(app_url).split('/')

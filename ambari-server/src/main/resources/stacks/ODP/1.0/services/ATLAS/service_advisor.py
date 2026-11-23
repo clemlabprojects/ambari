@@ -650,8 +650,8 @@ class AtlasValidator(service_advisor.ServiceAdvisor):
   def validateAtlasConfigurationsFromHDP30(self, properties, recommendedDefaults, configurations, services, hosts):
     validationItems = []
     atlas_admin_password = properties['atlas.admin.password']
-    if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', atlas_admin_password)) or bool(re.search('[\\\`"\']', atlas_admin_password)):
-      validationItems.append({"config-name": 'atlas.admin.password', "item": self.getNotApplicableItem("Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are  \" ' \ `")})
+    if not bool(re.search(r'^(?=.*[0-9])(?=.*[a-zA-Z]).{8,}$', atlas_admin_password)) or bool(re.search('[\\\\`"\']', atlas_admin_password)):
+      validationItems.append({"config-name": 'atlas.admin.password', "item": self.getNotApplicableItem("Password should be minimum 8 characters with minimum one alphabet and one numeric. Unsupported special characters are  \" ' \\ `")})
     return self.toConfigurationValidationProblems(validationItems, 'atlas-env')
 
 

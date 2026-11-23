@@ -83,7 +83,7 @@ class Extension(object, metaclass=ExtensionRegistry):
     def filter_stream(self, stream):
         """It's passed a :class:`~ambari_jinja2.lexer.TokenStream` that can be used
         to filter tokens returned.  This method has to return an iterable of
-        :class:`~ambari_jinja2.lexer.Token`\s, but it doesn't have to return a
+        :class:`~ambari_jinja2.lexer.Token`\\s, but it doesn't have to return a
         :class:`~ambari_jinja2.lexer.TokenStream`.
 
         In the `ext` folder of the Jinja2 source distribution there is a file

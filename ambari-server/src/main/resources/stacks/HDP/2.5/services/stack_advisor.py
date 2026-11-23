@@ -545,11 +545,11 @@ class HDP25StackAdvisor(HDP24StackAdvisor):
       putStormSiteProperty('topology.metrics.consumer.register',
                            '[{"class": "org.apache.hadoop.metrics2.sink.storm.StormTimelineMetricsSink", '
                            '"parallelism.hint": 1, '
-                           '"whitelist": ["kafkaOffset\\\..+/", "__complete-latency", "__process-latency", '
+                           '"whitelist": ["kafkaOffset\\\\..+/", "__complete-latency", "__process-latency", '
                            '"__execute-latency", '
-                           '"__receive\\\.population$", "__sendqueue\\\.population$", "__execute-count", "__emit-count", '
-                           '"__ack-count", "__fail-count", "memory/heap\\\.usedBytes$", "memory/nonHeap\\\.usedBytes$", '
-                           '"GC/.+\\\.count$", "GC/.+\\\.timeMs$"]}]')
+                           '"__receive\\\\.population$", "__sendqueue\\\\.population$", "__execute-count", "__emit-count", '
+                           '"__ack-count", "__fail-count", "memory/heap\\\\.usedBytes$", "memory/nonHeap\\\\.usedBytes$", '
+                           '"GC/.+\\\\.count$", "GC/.+\\\\.timeMs$"]}]')
     else:
       putStormSiteProperty('storm.cluster.metrics.consumer.register', 'null')
       putStormSiteProperty('topology.metrics.consumer.register', 'null')

@@ -40,7 +40,7 @@ def service(
   if name == 'ui':
     process_cmd = "^java.+backtype.storm.ui.core$"
   elif name == "rest_api":
-    process_cmd = format("{java64_home}/bin/java -jar {rest_lib_dir}/`ls {rest_lib_dir} | grep -wE storm-rest-[0-9.-]+\.jar` server")
+    process_cmd = format("{java64_home}/bin/java -jar {rest_lib_dir}/`ls {rest_lib_dir} | grep -wE storm-rest-[0-9.-]+\\.jar` server")
   else:
     process_cmd = format("^java.+backtype.storm.daemon.{name}$")
 

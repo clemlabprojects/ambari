@@ -20,10 +20,10 @@ limitations under the License.
 import re
 
 # [a,b,c]
-REGEX_LIST = '^\w*\[.+\]\w*$'
+REGEX_LIST = '^\\w*\\[.+\\]\\w*$'
 
 # {a: v, b: v2, c: v3}
-REGEX_DICTIONARY = '^\w*\{.+\}\w*$'
+REGEX_DICTIONARY = '^\\w*\\{.+\\}\\w*$'
 
 """
 storm-cluster:
@@ -32,14 +32,14 @@ storm-cluster:
   groups:
     [hadoop, hadoop-secure]
 
-^\s* - allow any whitespace or newlines to start
-\S+ - at least 1 word character (including dashes)
+^\\s* - allow any whitespace or newlines to start
+\\S+ - at least 1 word character (including dashes)
 [ ]*:[ ]* - followed by a colon (allowing spaces around the colon)
 [\r\n\f]+ - at least 1 newline
 
-\s*\S+[ ]*:[ ]*[\r\n\f] - follow with the same basically to ensure a map of maps
+\\s*\\S+[ ]*:[ ]*[\r\n\f] - follow with the same basically to ensure a map of maps
 """
-REGEX_NESTED_MAPS = "^\s*\S+[ ]*:[ ]*[\r\n\f]+\s*\S+[ ]*:[ ]*[\r\n\f]"
+REGEX_NESTED_MAPS = "^\\s*\\S+[ ]*:[ ]*[\r\n\f]+\\s*\\S+[ ]*:[ ]*[\r\n\f]"
 
 
 def escape_yaml_property(value):

@@ -897,7 +897,7 @@ def get_encrypted_password(alias, password, properties, options):
 
 
 def is_alias_string(passwdStr):
-  regex = re.compile("\$\{alias=[\w\.]+\}")
+  regex = re.compile("\\$\\{alias=[\\w\\.]+\\}")
   # Match implies string at beginning of word
   r = regex.match(passwdStr)
   if r is not None:

@@ -83,9 +83,9 @@ class CheckHost(Script):
   # Package prefixes that are used to find repos (then repos are used to find other packages)
   PACKAGES = [
     "^hadoop.*$", "^zookeeper.*$", "^webhcat.*$", "^oozie.*$", "^ambari.*$", "^.+-manager-server-db.*$",
-    "^.+-manager-daemons.*$", "^mahout[_\-]\d.*$", "^spark.*$", "^falcon.*$", "^hbase.*$", "^kafka.*$", "^knox.*$",
+    "^.+-manager-daemons.*$", "^mahout[_\\-]\\d.*$", "^spark.*$", "^falcon.*$", "^hbase.*$", "^kafka.*$", "^knox.*$",
     "^sqoop.*$", "^storm.*$", "^flume.*$","^hcatalog.*$", "^phoenix.*$", "^ranger.*$", "^accumulo.*$", "^hive_.*$",
-    "^pig[_\-.].*$" # there's a default 'pigz' package which we should avoid
+    "^pig[_\\-.].*$" # there's a default 'pigz' package which we should avoid
   ]
   
 
@@ -211,7 +211,7 @@ class CheckHost(Script):
   def execute_transparent_huge_page_check(self, config):
     Logger.info("Transparent huge page check started.")
 
-    thp_regex = "\[(.+)\]"
+    thp_regex = "\\[(.+)\\]"
     file_name = None
     if OSCheck.is_ubuntu_family():
       file_name = THP_FILE_UBUNTU

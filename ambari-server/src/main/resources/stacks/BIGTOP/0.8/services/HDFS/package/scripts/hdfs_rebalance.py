@@ -47,14 +47,14 @@ class HdfsLine():
   
   
   MEMORY_SUFFIX = ['B','KB','MB','GB','TB','PB','EB']
-  MEMORY_PATTERN = '(?P<memmult_%d>(?P<memory_%d>(\d+)(.|,)?(\d+)?) (?P<mult_%d>'+"|".join(MEMORY_SUFFIX)+'))'
+  MEMORY_PATTERN = '(?P<memmult_%d>(?P<memory_%d>(\\d+)(.|,)?(\\d+)?) (?P<mult_%d>'+"|".join(MEMORY_SUFFIX)+'))'
   
-  HEADER_BEGIN_PATTERN = re.compile('Time Stamp\w+Iteration#\w+Bytes Already Moved\w+Bytes Left To Move\w+Bytes Being Moved')
+  HEADER_BEGIN_PATTERN = re.compile('Time Stamp\\w+Iteration#\\w+Bytes Already Moved\\w+Bytes Left To Move\\w+Bytes Being Moved')
   PROGRESS_PATTERN = re.compile(
-                            "(?P<date>.*?)\s+" + 
-                            "(?P<iteration>\d+)\s+" + 
-                            MEMORY_PATTERN % (1,1,1) + "\s+" + 
-                            MEMORY_PATTERN % (2,2,2) + "\s+" +
+                            "(?P<date>.*?)\\s+" + 
+                            "(?P<iteration>\\d+)\\s+" + 
+                            MEMORY_PATTERN % (1,1,1) + "\\s+" + 
+                            MEMORY_PATTERN % (2,2,2) + "\\s+" +
                             MEMORY_PATTERN % (3,3,3)
                             )
   PROGRESS_END_PATTERN = re.compile('(The cluster is balanced. Exiting...|The cluster is balanced. Exiting...)')

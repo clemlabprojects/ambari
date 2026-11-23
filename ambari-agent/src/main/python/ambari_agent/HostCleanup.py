@@ -389,7 +389,7 @@ class HostCleanup:
           identifier = identifier.strip()
           if identifier in line:
             logger.debug("Found " + line + " for " + identifier);
-            line = re.sub("\s\s+" , " ", line) #replace multi spaces with single space before calling the split
+            line = re.sub("\\s\\s+" , " ", line) #replace multi spaces with single space before calling the split
             tokens = line.split(' ')
             logger.debug(tokens)
             logger.debug(len(tokens))

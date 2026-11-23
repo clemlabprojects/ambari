@@ -127,8 +127,8 @@ class Properties(object):
   def unescape(self, value):
     newvalue = value
     if not value is None:
-      newvalue = value.replace('\:', ':')
-      newvalue = newvalue.replace('\=', '=')
+      newvalue = value.replace('\\:', ':')
+      newvalue = newvalue.replace('\\=', '=')
     return newvalue
 
   def removeOldProp(self, key):

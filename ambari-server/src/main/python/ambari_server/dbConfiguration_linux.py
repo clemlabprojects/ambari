@@ -111,7 +111,7 @@ class LinuxDBMSConfig(DBMSConfig):
         self.database_host = get_validated_string_input(
             "Hostname (" + self.database_host + "): ",
             self.database_host,
-            "^[a-zA-Z0-9.\-]*$",
+            "^[a-zA-Z0-9.\\-]*$",
             "Invalid hostname.",
             False
         )
@@ -598,7 +598,7 @@ class PGConfig(LinuxDBMSConfig):
     return get_validated_string_input(
         "Postgres schema (" + postgres_schema + "): ",
         postgres_schema,
-        "^[a-zA-Z0-9_\-]*$",
+        "^[a-zA-Z0-9_\\-]*$",
         "Invalid schema name.",
         False, allowEmpty=True
     )
@@ -767,7 +767,7 @@ class PGConfig(LinuxDBMSConfig):
   def _configure_pg_hba_postgres_user():
     postgresString = "all   postgres"
     pg_hba_conf_file_content_in = sudo.read_file(PGConfig.PG_HBA_CONF_FILE)
-    pg_hba_conf_file_content_out = re.sub('all\s*all', postgresString, pg_hba_conf_file_content_in.decode())
+    pg_hba_conf_file_content_out = re.sub('all\\s*all', postgresString, pg_hba_conf_file_content_in.decode())
     sudo.create_file(PGConfig.PG_HBA_CONF_FILE, pg_hba_conf_file_content_out)
     sudo.chmod(PGConfig.PG_HBA_CONF_FILE, 0o644)
 

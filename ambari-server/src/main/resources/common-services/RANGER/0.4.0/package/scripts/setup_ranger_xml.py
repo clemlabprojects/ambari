@@ -360,8 +360,8 @@ def password_validation(password):
   import params
   if password.strip() == "":
     raise Fail("Blank password is not allowed for Bind user. Please enter valid password.")
-  if re.search("[\\\`'\"]",password):
-    raise Fail("LDAP/AD bind password contains one of the unsupported special characters like \" ' \ `")
+  if re.search("[\\\\`'\"]",password):
+    raise Fail("LDAP/AD bind password contains one of the unsupported special characters like \" ' \\ `")
   else:
     Logger.info("password validated")
 
