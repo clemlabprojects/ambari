@@ -111,8 +111,12 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
     host index where component should exist.
     Must be overridden in child class.
     """
-    # Nothing to do
-    pass
+    # the Ozone Manager and the Storage Container Manager go to the same host, see
+    # getServiceComponentLayoutValidations
+    self.componentLayoutSchemes.update({
+      'OZONE_MANAGER': {"else": 0},
+      'OZONE_STORAGE_CONTAINER_MANAGER': {"else": 0}
+    })
 
 
   def getServiceComponentLayoutValidations(self, services, hosts):
@@ -121,7 +125,21 @@ class OzoneServiceAdvisor(service_advisor.ServiceAdvisor):
     Must be overridden in child class.
     """
 
-    return self.getServiceComponentCardinalityValidations(services, hosts, "OZONE")
+    items = self.getServiceComponentCardinalityValidations(services, hosts, "OZONE")
+
+    # The Ozone Manager and the Storage Container Manager must run on the same hosts: with the Ozone Manager on
+    # a host without a Storage Container Manager, Ozone does not start.
+    managerHosts = set(self.getHostNamesWithComponent("OZONE", "OZONE_MANAGER", services))
+    scmHosts = set(self.getHostNamesWithComponent("OZONE", "OZONE_STORAGE_CONTAINER_MANAGER", services))
+    if managerHosts and scmHosts and managerHosts != scmHosts:
+      message = "The Ozone Manager and the Ozone Storage Container Manager must be installed on the same hosts."
+      for host in sorted(managerHosts - scmHosts):
+        items.append({"type": 'host-component', "level": 'ERROR', "message": message,
+                      "component-name": 'OZONE_MANAGER', "host": host})
+      for host in sorted(scmHosts - managerHosts):
+        items.append({"type": 'host-component', "level": 'ERROR', "message": message,
+                      "component-name": 'OZONE_STORAGE_CONTAINER_MANAGER', "host": host})
+    return items
 
 
   def getServiceConfigurationRecommendations(self, configurations, clusterData, services, hosts):
