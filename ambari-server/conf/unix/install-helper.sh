@@ -198,8 +198,8 @@ do_install(){
   fi
 
   if [ -f "${AMBARI_ENV_RPMSAVE}" ]; then
-    local python_path_line="export PYTHONPATH=${AMBARI_SERVER_ROOT_DIR}/lib:\$\{PYTHONPATH\}"
-    grep "^${python_path_line}\$" "${AMBARI_ENV_RPMSAVE}" > /dev/null
+    local python_path_line="export PYTHONPATH=${AMBARI_SERVER_ROOT_DIR}/lib:\${PYTHONPATH}"
+    grep -q "^export PYTHONPATH=\"\{0,1\}${AMBARI_SERVER_ROOT_DIR}/lib:" "${AMBARI_ENV_RPMSAVE}"
     if [ $? -ne 0 ]; then
       echo -e "\n${python_path_line}" >> ${AMBARI_ENV_RPMSAVE}
     fi
