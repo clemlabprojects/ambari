@@ -16,6 +16,25 @@
 ROOT=`echo "${RPM_INSTALL_PREFIX}" | sed 's|/$||g'`
 
 
+# "ambari-server upgrade" consumes the .rpmsave files. One that is still there was saved by a previous package
+# and not imported yet, so it must not be replaced by the default file of that package.
+pending_backup(){
+  local backup="$1"
+  case "${backup}" in
+    *.rpmsave) ;;
+    *) return 1 ;;
+  esac
+  [ -f "${backup}" ] || return 1
+  case "${backup}" in
+    */krb5JAASLogin.conf.rpmsave)
+      # the upgrade leaves this backup in place when it has no usable keytab: only a usable one is pending
+      local keytab=`sed -n 's/.*keyTab="\([^"]*\)".*/\1/p' "${backup}" | head -1`
+      [ -n "${keytab}" ] && [ -f "${keytab}" ] || return 1
+      ;;
+  esac
+  return 0
+}
+
 do_backups(){
   local etc_dir="${ROOT}/etc/ambari-server"
   local var_dir="${ROOT}/var/lib/ambari-server"
@@ -37,6 +56,12 @@ common-services directory:${var_dir}/resources/common-services:${common_service_
 
  echo "${backup_folders}"| while IFS=: read title source destination; do
    if [ -e "${source}" ]; then
+     if pending_backup "${destination}"; then
+       # the previous package was installed without running "ambari-server upgrade": the backup still holds the
+       # settings of the server, and the file in place is only the default one of that package
+       echo "Keeping ${destination}: it was not imported yet by ambari-server upgrade"
+       continue
+     fi
      echo "Backing up ${title}: ${source} -> ${destination}"
      mv -f "${source}" "${destination}"
    fi
