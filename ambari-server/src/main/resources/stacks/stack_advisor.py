@@ -3032,6 +3032,11 @@ class DefaultStackAdvisor(StackAdvisor):
     result_values_set = self.merge_proxyusers_values(current_value, value)
     if len(result_values_set) > 0:
       result_value = ",".join(sorted([val for val in result_values_set if val]))
+    # nothing to recommend (the components this user is tied to are not installed): a value already set to the
+    # wildcard is kept, it is not replaced by an empty list that would refuse every impersonation by this user;
+    # without an existing value the list stays empty and nothing is opened
+    if not result_value and is_wildcard_value:
+      result_value = "*"
 
     if is_groups:
       property_name = "hadoop.proxyuser.{0}.groups".format(user_name)
@@ -3050,6 +3055,11 @@ class DefaultStackAdvisor(StackAdvisor):
     result_values_set = self.merge_proxyusers_values(current_value, value)
     if len(result_values_set) > 0:
       result_value = ",".join(sorted([val for val in result_values_set if val]))
+    # nothing to recommend (the components this user is tied to are not installed): a value already set to the
+    # wildcard is kept, it is not replaced by an empty list that would refuse every impersonation by this user;
+    # without an existing value the list stays empty and nothing is opened
+    if not result_value and is_wildcard_value:
+      result_value = "*"
 
     if is_groups:
       property_name = "httpfs.proxyuser.{0}.groups".format(user_name)
