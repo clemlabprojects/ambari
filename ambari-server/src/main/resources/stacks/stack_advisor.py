@@ -2858,29 +2858,34 @@ class DefaultStackAdvisor(StackAdvisor):
         userNameConfig, userNameProperty, hostSelectorMap = values[:3]
         user = get_from_dict(services, ("configurations", userNameConfig, "properties", userNameProperty), None)
         if user:
-          usersComponents[user] = (userNameConfig, userNameProperty, hostSelectorMap)
+          # a user can be listed several times (hbase: Thrift and REST servers...): all of its entries count
+          usersComponents.setdefault(user, []).append((userNameConfig, userNameProperty, hostSelectorMap))
 
-      for user, (userNameConfig, userNameProperty, hostSelectorMap) in usersComponents.items():
-        proxyUsers = {"config": userNameConfig, "propertyName": userNameProperty}
-        for proxyPropertyName, hostSelector in hostSelectorMap.items():
-          componentHostNamesString = hostSelector if isinstance(hostSelector, str) else '*'
-          if isinstance(hostSelector, (list, tuple)):
-            _, componentHostNames = self.get_data_for_proxyuser(user, services, configurations) # preserve old values
-            for component in hostSelector:
-              componentHosts = self.getHostsWithComponent(serviceName, component, services, hosts)
-              if componentHosts is not None:
-                for componentHost in componentHosts:
-                  componentHostName =  componentHost["Hosts"]["host_name"]
-                  componentHostNames.add(componentHostName)
+      for user, entries in usersComponents.items():
+        proxyUsers = {"config": entries[0][0], "propertyName": entries[0][1]}
+        for userNameConfig, userNameProperty, hostSelectorMap in entries:
+          for proxyPropertyName, hostSelector in hostSelectorMap.items():
+            componentHostNamesString = hostSelector if isinstance(hostSelector, str) else '*'
+            if isinstance(hostSelector, (list, tuple)):
+              _, componentHostNames = self.get_data_for_proxyuser(user, services, configurations) # preserve old values
+              for component in hostSelector:
+                componentHosts = self.getHostsWithComponent(serviceName, component, services, hosts)
+                if componentHosts is not None:
+                  for componentHost in componentHosts:
+                    componentHostName =  componentHost["Hosts"]["host_name"]
+                    componentHostNames.add(componentHostName)
 
-            componentHostNamesString = ",".join(sorted(componentHostNames))
-            self.logger.info("Host List for [service='{0}'; user='{1}'; components='{2}']: {3}".format(serviceName, user, ','.join(hostSelector), componentHostNamesString))
+              componentHostNamesString = ",".join(sorted(componentHostNames))
+              self.logger.info("Host List for [service='{0}'; user='{1}'; components='{2}']: {3}".format(serviceName, user, ','.join(hostSelector), componentHostNamesString))
 
-          if not proxyPropertyName in proxyUsers:
-            proxyUsers[proxyPropertyName] = componentHostNamesString
+            # a wildcard entry wins, the host lists of the other entries add up
+            previous = proxyUsers.get(proxyPropertyName)
+            if previous is None or componentHostNamesString == '*':
+              proxyUsers[proxyPropertyName] = componentHostNamesString
+            elif previous != '*' and componentHostNamesString:
+              proxyUsers[proxyPropertyName] = ",".join(sorted(set(filter(None, previous.split(","))) | set(componentHostNamesString.split(","))))
 
-        if not user in resultUsers:
-          resultUsers[user] = proxyUsers
+        resultUsers[user] = proxyUsers
 
     return resultUsers
 
