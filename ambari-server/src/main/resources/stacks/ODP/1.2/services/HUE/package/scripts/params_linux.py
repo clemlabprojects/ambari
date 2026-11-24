@@ -441,7 +441,12 @@ hue_ssl_enabled = default("/configurations/hue-env/hue_ssl_enabled", False)
 if hue_ssl_enabled:
   hue_ssl_certificate = default("/configurations/hue-ini-conf/hue_ssl_certificate", "/etc/security/serverKeys/certificate.pem")
   hue_ssl_private_key = default("/configurations/hue-ini-conf/hue_ssl_private_key", "/etc/security/serverKeys/key.pem")
-  hue_ssl_cert_chain = default("/configurations/hue-ini-conf/hue_ssl_cert_chain", "/etc/security/serverKeys/ca.cert.pem")
+# CA certificates Hue trusts when it connects to a TLS service (HBase Thrift, HiveServer2...), whether or not
+# Hue's own web server uses TLS; left empty when the file does not exist, since Hue refuses to start then
+hue_ssl_cert_chain = str(default("/configurations/hue-ini-conf/hue_ssl_cert_chain", "")).strip() or "/etc/security/serverKeys/ca.cert.pem"
+if not os.path.isfile(hue_ssl_cert_chain):
+  Logger.warning("Hue CA certificates file {0} does not exist, Hue will only trust the system CA certificates".format(hue_ssl_cert_chain))
+  hue_ssl_cert_chain = ""
 hue_http_port = default("/configurations/hue-ini-conf/hue_http_port", 8888)
 hue_timezone = default("/configurations/hue-ini-conf/hue_timezone", "America/Los_Angeles")
 hue_django_debug_mode = default("/configurations/hue-ini-conf/hue_django_debug_mode", False)

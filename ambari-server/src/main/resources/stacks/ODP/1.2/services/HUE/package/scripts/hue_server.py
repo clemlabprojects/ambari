@@ -181,9 +181,10 @@ class HueGatewayDefault(HueGateway):
       # need to sleep on the first time
       if first_time:
         time.sleep(10)
+      # Hue's HTTPS clients (HBase Thrift over TLS...) trust the CA certificates named by REQUESTS_CA_BUNDLE
       Execute(daemon_cmd,
               user=params.hue_user,
-              environment={},
+              environment={'REQUESTS_CA_BUNDLE': params.hue_ssl_cert_chain} if params.hue_ssl_cert_chain else {},
               not_if=no_op_test
       )
       # need to sleep on the first time
