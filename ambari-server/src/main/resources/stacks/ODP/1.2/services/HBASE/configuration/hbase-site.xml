@@ -56,11 +56,11 @@
   </property>
   <property>
     <name>hbase.thrift.ssl.enabled</name>
-    <value>false</value>
+    <value>true</value>
     <value-attributes>
       <type>boolean</type>
     </value-attributes>
-    <description>Enable TLS/SSL on HBase Thrift interface</description>
+    <description>Enable TLS/SSL on HBase Thrift interface. Required by the Thrift HTTP server when hbase.thrift.security.qop is auth-conf (privacy): the server refuses to start otherwise.</description>
     <on-ambari-upgrade add="true"/>
   </property>
   <property>

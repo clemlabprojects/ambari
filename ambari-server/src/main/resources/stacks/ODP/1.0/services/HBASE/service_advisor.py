@@ -464,6 +464,11 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
     if hbaseThriftServerHosts is not None and len(hbaseThriftServerHosts):
       putHbaseSiteProperty('hbase.regionserver.thrift.framed', 'false')
       putHbaseSiteProperty('hbase.regionserver.thrift.http', 'true')
+      # The Thrift HTTP server refuses to start with the privacy QoP (auth-conf) without TLS
+      hbase_site = services['configurations'].get('hbase-site', {}).get('properties', {})
+      qop = configurations.get('hbase-site', {}).get('properties', {}).get('hbase.thrift.security.qop', hbase_site.get('hbase.thrift.security.qop', 'auth-conf'))
+      if qop == 'auth-conf':
+        putHbaseSiteProperty('hbase.thrift.ssl.enabled', 'true')
     if hueServerHosts is not None and len(hueServerHosts) > 0 :
       putHbaseSiteProperty('hbase.thrift.support.proxyuser', 'true')
 
@@ -530,10 +535,6 @@ class HBASERecommender(service_advisor.ServiceAdvisor):
         putHbaseSiteProperty('hbase.thrift.info.bindAddress', '0.0.0.0')
       if 'hbase.thrift.security.qop' in configurations['hbase-site']['properties']:
         putHbaseSiteProperty('hbase.thrift.security.qop', 'auth-conf')
-      if 'hbase.thrift.ssl.enabled' in configurations['hbase-site']['properties']:
-        putHbaseSiteProperty('hbase.thrift.ssl.enabled', 'false')
-      if 'hbase.thrift.ssl.enabled' in configurations['hbase-site']['properties']:
-        putHbaseSiteProperty('hbase.thrift.ssl.enabled', 'false')
       if 'hadoop.security.credential.provider.path' in configurations['hbase-site']['properties']:
         putHbaseSiteProperty('hadoop.security.credential.provider.path', 'localjceks://file//etc/hbase/conf/creds.localjceks')
 
