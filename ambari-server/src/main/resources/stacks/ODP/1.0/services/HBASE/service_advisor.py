@@ -951,11 +951,14 @@ class HBASEValidator(service_advisor.ServiceAdvisor):
         hbase_user = services['configurations']['hbase-env']['properties']['hbase_user']
         if 'hbase.thrift.support.proxyuser' in hbase_site:
           if hbase_site['hbase.thrift.support.proxyuser'].lower() == 'true':
-            for prop in ["hadoop.proxyuser.{0}.groups".format(hbase_user),"hadoop.proxyuser.{0}.groups".format(hbase_user)]:
-              if prop not in services['configurations']['core-site']['properties']:
-                validationItems.append({"config-name": prop_name,
-                                      "item": self.getErrorItem(
-                                        "HBase user need to be added to proxyuser when impersonation is enabled.".format(prop_name))})
+            core_site = services['configurations'].get('core-site', {}).get('properties', {})
+            # an empty value refuses every impersonation by the HBase user, like a missing one
+            missing = [prop for prop in ["hadoop.proxyuser.{0}.groups".format(hbase_user), "hadoop.proxyuser.{0}.hosts".format(hbase_user)]
+                       if not core_site.get(prop, '').strip()]
+            if missing:
+              validationItems.append({"config-name": 'hbase.thrift.support.proxyuser',
+                                    "item": self.getErrorItem(
+                                      "The HBase Thrift Server impersonates the users: {0} must be set in core-site.".format(" and ".join(missing)))})
 
       validationProblems = self.toConfigurationValidationProblems(validationItems, "hbase-site")
       return validationProblems
