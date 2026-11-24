@@ -22,4 +22,9 @@ if [ ! -f "${AMBARI_AGENT_BINARY_SYMLINK}" ]; then
   ln -s "${AMBARI_AGENT_BINARY}" "${AMBARI_AGENT_BINARY_SYMLINK}"
 fi
 
+# load the ambari-agent systemd unit shipped by the package
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
 exit 0

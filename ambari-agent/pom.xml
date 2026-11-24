@@ -434,6 +434,19 @@
                 </source>
               </sources>
             </mapping>
+            <mapping>
+              <!-- the same unit as the deb package: systemd must not kill the daemons the agent started -->
+              <directory>/usr/lib/systemd/system</directory>
+              <filemode>644</filemode>
+              <username>root</username>
+              <groupname>root</groupname>
+              <directoryIncluded>false</directoryIncluded>
+              <sources>
+                <source>
+                  <location>${basedir}/src/main/package/deb/systemd/ambari-agent.service</location>
+                </source>
+              </sources>
+            </mapping>
            <mapping>
               <directory>/usr/lib/ambari-agent</directory>
               <filemode>755</filemode>
