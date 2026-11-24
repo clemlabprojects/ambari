@@ -663,7 +663,7 @@ limitations under the License.
     </property>
     <property>
         <name>load_auth_to_local_rules</name>
-        <value>false</value>
+        <value>true</value>
         <description>If checked and Impala is using Kerberos, Impala will use the hadoop.security.auth_to_local rules from HDFS configuration. The relevant HDFS configuration is derived from Additional Rules to Map Kerberos Principals to Short Names.</description>
         <value-attributes>
             <type>boolean</type>
