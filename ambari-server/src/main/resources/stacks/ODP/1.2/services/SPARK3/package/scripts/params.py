@@ -267,7 +267,8 @@ elif spark_transport_mode.lower() == 'http':
 spark_thrift_sparkconf = None
 spark_thrift_cmd_opts_properties = ''
 spark_thrift_fairscheduler_content = None
-spark_thrift_master = "yarn-client"
+# Spark 3 only accepts "yarn"; start-thriftserver.sh runs in client deploy mode
+spark_thrift_master = "yarn"
 if 'nm_hosts' in config['clusterHostInfo'] and len(config['clusterHostInfo']['nodemanager_hosts']) == 1:
   # use local mode when there's only one nodemanager
   spark_thrift_master = "local[4]"
