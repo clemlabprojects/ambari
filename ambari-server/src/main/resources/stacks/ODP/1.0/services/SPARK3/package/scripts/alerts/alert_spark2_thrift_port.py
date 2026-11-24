@@ -37,6 +37,8 @@ CRITICAL_MESSAGE = "Connection failed on host {0}:{1} ({2})"
 HIVE_SERVER_THRIFT_PORT_KEY = '{{spark3-hive-site-override/hive.server2.thrift.port}}'
 HIVE_SERVER_THRIFT_HTTP_PORT_KEY = '{{spark3-hive-site-override/hive.server2.thrift.http.port}}'
 HIVE_SERVER_TRANSPORT_MODE_KEY = '{{spark3-hive-site-override/hive.server2.transport.mode}}'
+HIVE_SERVER_THRIFT_HTTP_PATH_KEY = '{{spark3-hive-site-override/hive.server2.thrift.http.path}}'
+HIVE_SITE_THRIFT_HTTP_PATH_KEY = '{{hive-site/hive.server2.thrift.http.path}}'
 SECURITY_ENABLED_KEY = '{{cluster-env/security_enabled}}'
 
 HIVE_SERVER2_AUTHENTICATION_KEY = '{{hive-site/hive.server2.authentication}}'
@@ -47,6 +49,7 @@ HIVE_SERVER2_PRINCIPAL_KEY = '{{spark3-hive-site-override/hive.server2.authentic
 KERBEROS_EXECUTABLE_SEARCH_PATHS_KEY = '{{kerberos-env/executable_search_paths}}'
 
 THRIFT_PORT_DEFAULT = 10002
+THRIFT_HTTP_PATH_DEFAULT = 'cliservice'
 HIVE_SERVER_TRANSPORT_MODE_DEFAULT = 'binary'
 
 SPARK_USER_KEY = '{{spark3-env/spark_user}}'
@@ -63,6 +66,7 @@ def get_tokens():
     to build the dictionary passed into execute
     """
     return (HIVE_SERVER_THRIFT_PORT_KEY, HIVE_SERVER_THRIFT_HTTP_PORT_KEY, HIVE_SERVER_TRANSPORT_MODE_KEY, SECURITY_ENABLED_KEY,
+            HIVE_SERVER_THRIFT_HTTP_PATH_KEY, HIVE_SITE_THRIFT_HTTP_PATH_KEY,
             KERBEROS_EXECUTABLE_SEARCH_PATHS_KEY, SPARK_USER_KEY, HIVE_SERVER2_KERBEROS_KEYTAB, HIVE_SERVER2_PRINCIPAL_KEY)
 
 @OsFamilyFuncImpl(os_family=OsFamilyImpl.DEFAULT)
@@ -136,7 +140,10 @@ def execute(configurations={}, parameters={}, host_name=None):
             beeline_url = ["jdbc:hive2://{host_name}:{port}/default;principal={hive_principal}","transportMode={transport_mode}"]
         else:
             beeline_url = ["jdbc:hive2://{host_name}:{port}/default","transportMode={transport_mode}"]
-        # append url according to used transport
+        # append url according to used transport: in http mode the Thrift endpoint is a path of the server
+        if transport_mode.lower() == 'http':
+            http_path = configurations.get(HIVE_SERVER_THRIFT_HTTP_PATH_KEY) or configurations.get(HIVE_SITE_THRIFT_HTTP_PATH_KEY) or THRIFT_HTTP_PATH_DEFAULT
+            beeline_url.append("httpPath=" + str(http_path).strip("/"))
 
         beeline_cmd = os.path.join(spark_home, "bin", "beeline")
         cmd = "! %s -u '%s'  -e '' 2>&1| awk '{print}'|grep -i -e 'Connection refused' -e 'Invalid URL' -e 'Error: Could not open'" % \
