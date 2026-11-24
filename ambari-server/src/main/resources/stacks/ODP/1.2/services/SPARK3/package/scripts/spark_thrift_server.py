@@ -30,7 +30,7 @@ from resource_management.core.logger import Logger
 from resource_management.core import shell
 from setup_spark import setup_spark
 from spark_service import spark_service
-from spark_ranger import create_spark_ranger_user
+from spark_ranger import create_spark_ranger_user, create_thrift_server_yarn_policy
 
 
 class SparkThriftServer(Script):
@@ -52,6 +52,7 @@ class SparkThriftServer(Script):
 
     self.configure(env)
     create_spark_ranger_user()
+    create_thrift_server_yarn_policy()
     spark_service('sparkthriftserver', upgrade_type=upgrade_type, action='start')
 
   def stop(self, env, upgrade_type=None):

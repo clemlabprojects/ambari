@@ -272,6 +272,18 @@ if 'nm_hosts' in config['clusterHostInfo'] and len(config['clusterHostInfo']['no
   # use local mode when there's only one nodemanager
   spark_thrift_master = "local[4]"
 
+# the Ranger YARN policy of the thrift server: Ranger names a queue by its full path
+spark_thrift_configured_master = str(default("/configurations/spark3-thrift-sparkconf/spark.master", spark_thrift_master))
+if "{{" in spark_thrift_configured_master:
+  spark_thrift_configured_master = spark_thrift_master
+spark_thrift_on_yarn = spark_thrift_configured_master.startswith("yarn")
+spark_thrift_yarn_queue = str(default("/configurations/spark3-thrift-sparkconf/spark.yarn.queue", "default")).strip() or "default"
+if spark_thrift_yarn_queue != "root" and not spark_thrift_yarn_queue.startswith("root."):
+  spark_thrift_yarn_queue = "root." + spark_thrift_yarn_queue
+ranger_yarn_repo_name = default("/configurations/ranger-yarn-security/ranger.plugin.yarn.service.name", None)
+if not ranger_yarn_repo_name or ranger_yarn_repo_name == "{{repo_name}}":
+  ranger_yarn_repo_name = str(config['clusterName']) + '_yarn'
+
 if has_spark_thriftserver and 'spark3-thrift-sparkconf' in config['configurations']:
   spark_thrift_sparkconf = config['configurations']['spark3-thrift-sparkconf']
   spark_thrift_cmd_opts_properties = config['configurations']['spark3-env']['spark_thrift_cmd_opts']
