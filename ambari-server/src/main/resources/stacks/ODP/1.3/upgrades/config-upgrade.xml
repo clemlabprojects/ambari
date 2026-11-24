@@ -165,6 +165,8 @@
                       summary="Commit Atlas index mutations to Solr (wait-searcher): Atlas 2.5 defaults it to false and the Atlas solrconfig has no autoSoftCommit, so new entities were not searchable.">
             <type>application-properties</type>
             <set key="atlas.graph.index.search.solr.wait-searcher" value="true" if-type="application-properties" if-key="atlas.graph.index.search.solr.wait-searcher" if-key-state="absent"/>
+            <!-- Atlas has to consume the topic of the Spark hook as well -->
+            <set key="atlas.notification.hook.consumer.topic.names" value="ATLAS_HOOK,ATLAS_SPARK_HOOK" if-type="application-properties" if-key="atlas.notification.hook.consumer.topic.names" if-key-state="absent"/>
           </definition>
           <definition xsi:type="configure" id="odp_1_3_2_0_atlas_logback_metadata_opts_default">
             <type>atlas-env</type>
@@ -217,6 +219,10 @@
             <set key="atlas.jaas.ticketBased-KafkaClient.loginModuleControlFlag" value="required"/>
             <set key="atlas.jaas.ticketBased-KafkaClient.loginModuleName" value="com.sun.security.auth.module.Krb5LoginModule"/>
             <set key="atlas.jaas.ticketBased-KafkaClient.option.useTicketCache" value="true"/>
+            <!-- Spark jobs run as the end user, who cannot publish to ATLAS_HOOK: the hook uses the topic
+                 the Atlas service opens to all users (stack default of spark3-atlas-application.properties) -->
+            <set key="atlas.notification.hook.topic.name" value="ATLAS_SPARK_HOOK"
+                 if-type="spark3-atlas-application.properties" if-key="atlas.notification.hook.topic.name" if-key-state="absent"/>
           </definition>
           <!-- Retain this migration for existing upgrade plans. Both placeholders now resolve
                to the same feature-gated Spark runtime in params.py. Container Java homes are
