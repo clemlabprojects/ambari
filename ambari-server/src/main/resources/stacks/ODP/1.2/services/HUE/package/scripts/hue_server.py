@@ -213,7 +213,16 @@ class HueGatewayDefault(HueGateway):
       File(params.hue_pid_file,
             action = "delete",
             )
-      return True
+    # The supervisor only stops its direct children: the gunicorn workers survive it, as well as the processes
+    # left by former stops and versions. Once it is gone, stop every remaining Hue process of the Hue user.
+    # The patterns cannot match the shell running them ([s]upervisor, (hue|supervisor)).
+    Execute(format("for i in $(seq 1 60); do pgrep -u {hue_user} -f '/hue/build/env/bin/[s]upervisor ' >/dev/null || break; sleep 1; done; "
+                   "pkill -TERM -u {hue_user} -f '/hue/build/env/bin/(hue|supervisor) ' || true; "
+                   "for i in $(seq 1 30); do pgrep -u {hue_user} -f '/hue/build/env/bin/(hue|supervisor) ' >/dev/null || exit 0; sleep 1; done; "
+                   "pkill -KILL -u {hue_user} -f '/hue/build/env/bin/(hue|supervisor) ' || true"),
+            user=params.hue_user
+    )
+    return True
 
   def status(self, env):
     import status_params
