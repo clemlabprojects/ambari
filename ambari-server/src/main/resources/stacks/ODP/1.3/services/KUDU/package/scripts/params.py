@@ -275,6 +275,11 @@ if enable_ranger_kudu:
     ranger_kudu_policymgr_ssl_attrs = config['configurationAttributes']['ranger-kudu-policymgr-ssl']
 
     policy_user = ranger_plugin_properties['policy_user']
+    # Kudu maps a principal to a user name with the krb5.conf rules only, never with hadoop.security.auth_to_local:
+    # it knows the service check user by the first component of its principal (ambari-qa-<cluster name>), and the
+    # default policies have to be granted to that name
+    if security_enabled and smokeuser_principal and policy_user == smokeuser:
+        policy_user = smokeuser_principal.split('@')[0].split('/')[0] or policy_user
 
     kudu_repository_configuration = {
         'username': ranger_plugin_properties['REPOSITORY_CONFIG_USERNAME'],
