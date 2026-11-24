@@ -274,6 +274,13 @@ class Spark3Recommender(service_advisor.ServiceAdvisor):
     servicesList = [service["StackServices"]["service_name"] for service in services["services"]]
     spark3JobHistoryServerHosts = self.getHostWithComponent("SPARK3", "SPARK3_JOBHISTORYSERVER", services, hosts)
     putSpark3DefaultsProperty = self.putProperty(configurations, "spark3-defaults", services)
+
+    # The external shuffle service only exists in the YARN NodeManagers: without YARN, the Thrift server keeps
+    # the shuffle data on its executors instead
+    if "YARN" not in servicesList and "spark3-thrift-sparkconf" in services["configurations"]:
+      putSpark3ThriftProperty = self.putProperty(configurations, "spark3-thrift-sparkconf", services)
+      putSpark3ThriftProperty("spark.shuffle.service.enabled", "false")
+      putSpark3ThriftProperty("spark.dynamicAllocation.shuffleTracking.enabled", "true")
     spark_jhs_port = '18082'
     spark_jhs_port_ssl = '18482'
     protocol = 'http://'

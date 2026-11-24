@@ -246,4 +246,22 @@
     <on-ambari-upgrade add="false"/>
   </property>
 
+  <property>
+    <name>spark.shuffle.service.name</name>
+    <value>spark3_shuffle</value>
+    <description>
+      The shuffle service of the YARN NodeManagers used by Spark 3, as named in yarn.nodemanager.aux-services.
+      Spark 3 has its own, next to the one of Spark 2.
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
+  <property>
+    <name>spark.shuffle.service.port</name>
+    <value>7338</value>
+    <description>
+      Port of the Spark 3 shuffle service of the YARN NodeManagers. Ambari gives the same port to that service;
+      the one of Spark 2 keeps 7337.
+    </description>
+    <on-ambari-upgrade add="false"/>
+  </property>
 </configuration>

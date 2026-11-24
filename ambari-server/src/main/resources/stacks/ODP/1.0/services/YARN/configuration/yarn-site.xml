@@ -1599,6 +1599,21 @@ yarn.node-labels.manager-class
     <on-ambari-upgrade add="false"/>
   </property>
   <property>
+    <name>yarn.nodemanager.aux-services.spark3_shuffle.class</name>
+    <value>org.apache.spark.network.yarn.YarnShuffleService</value>
+    <description>The auxiliary service class to use for Spark 3</description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
+    <name>yarn.nodemanager.aux-services.spark3_shuffle.classpath</name>
+    <value>{{stack_root}}/current/spark3-client/yarn/*:/etc/hadoop/conf/spark3-shuffle</value>
+    <description>
+      The auxiliary service classpath to use for Spark 3. The directory holds spark-shuffle-site.xml, written by
+      Ambari, which gives this shuffle service its own port next to the one of Spark 2.
+    </description>
+    <on-ambari-upgrade add="true"/>
+  </property>
+  <property>
     <name>yarn.resourcemanager.display.per-user-apps</name>
     <value>true</value>
     <description>

@@ -695,6 +695,10 @@ if (('yarn-hbase-log4j' in config['configurations']) and ('content' in config['c
 else:
   yarn_hbase_log4j_props = None
 
+# Spark 3 shuffle service of the NodeManagers: its port comes from the Spark 3 configuration the clients use
+spark3_shuffle_enabled = "spark3_shuffle" in [service.strip() for service in str(default("/configurations/yarn-site/yarn.nodemanager.aux-services", "")).split(',')]
+spark3_shuffle_port = default("/configurations/spark3-defaults/spark.shuffle.service.port", 7338)
+
 timeline_collector = ""
 yarn_timeline_service_version = config['configurations']['yarn-site']['yarn.timeline-service.version']
 yarn_timeline_service_versions = config['configurations']['yarn-site']['yarn.timeline-service.versions']

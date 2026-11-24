@@ -162,6 +162,26 @@ def yarn(name=None, config_dir=None):
             mode=0o644
   )
 
+  if params.spark3_shuffle_enabled:
+    # The Spark 3 shuffle service runs in the NodeManager next to the one of Spark 2: this file, on its classpath
+    # only, gives it its own port and metrics name (see yarn.nodemanager.aux-services.spark3_shuffle.classpath)
+    Directory(os.path.join(config_dir, "spark3-shuffle"),
+              owner=params.yarn_user,
+              group=params.user_group,
+              mode=0o755
+    )
+    XmlConfig("spark-shuffle-site.xml",
+              conf_dir=os.path.join(config_dir, "spark3-shuffle"),
+              configurations={
+                "spark.shuffle.service.port": str(params.spark3_shuffle_port),
+                "spark.yarn.shuffle.service.metrics.namespace": "spark3ShuffleService"
+              },
+              configuration_attributes={},
+              owner=params.yarn_user,
+              group=params.user_group,
+              mode=0o644
+    )
+
   XmlConfig("capacity-scheduler.xml",
             conf_dir=config_dir,
             configurations=params.config['configurations']['capacity-scheduler'],
