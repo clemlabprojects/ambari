@@ -80,7 +80,9 @@ stack_supports_ranger_audit_db = check_stack_feature(StackFeature.RANGER_AUDIT_D
 # hadoop default parameters
 hadoop_ozone_bin_dir = stack_select.get_hadoop_ozone_dir("bin")
 hadoop_conf_dir = conf_select.get_hadoop_conf_dir()
-daemon_script = format('{stack_root}/current/ozone-client/bin/ozone')
+# The daemons start from the bin directory of their own version: during an upgrade it is the target version, while
+# current/ozone-client still points at the previous one until the Ozone client is restarted, after the daemons.
+daemon_script = os.path.join(hadoop_ozone_bin_dir, "ozone")
 ozone_cmd = format('{stack_root}/current/ozone-client/bin/ozone')
 
 ROLE_NAME_MAP_CONF = {
