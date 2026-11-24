@@ -902,20 +902,6 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
            putYarnHBaseEnv("is_hbase_system_service_launch", "true")
         # Do not set to false in else
 
-  def spark3IsOnEveryNodeManager(self, services):
-    """True when each NodeManager host also has a Spark 3 component, hence the jar of its shuffle service."""
-    nodeManagerHosts = set()
-    spark3Hosts = set()
-    for service in services["services"]:
-      serviceName = service["StackServices"]["service_name"]
-      for component in service.get("components", []):
-        hostnames = component["StackServiceComponents"].get("hostnames") or []
-        if serviceName == "YARN" and component["StackServiceComponents"]["component_name"] == "NODEMANAGER":
-          nodeManagerHosts.update(hostnames)
-        elif serviceName == "SPARK3":
-          spark3Hosts.update(hostnames)
-    return len(nodeManagerHosts) > 0 and nodeManagerHosts.issubset(spark3Hosts)
-
   def recommendYARNConfigurationsFromODP10(self, configurations, clusterData, services, hosts):
     putYarnProperty = self.putProperty(configurations, "yarn-site", services)
     # Registry DNS is optional: only advertise it as enabled where the component is deployed
@@ -942,18 +928,17 @@ class YARNRecommender(service_advisor.ServiceAdvisor):
           currentValueService = currentValueService.replace("spark2_shuffle","")
         putYarnProperty('yarn.nodemanager.aux-services', currentValueService)
 
-    # Spark 3 has its own shuffle service in the NodeManagers, next to the one of Spark 2. It needs the Spark 3
-    # jars: it is only declared when every NodeManager host also has a Spark 3 component.
+    # Spark 3 has its own shuffle service in the NodeManagers, next to the one of Spark 2
     if 'yarn.nodemanager.aux-services' in services["configurations"]["yarn-site"]["properties"]:
       auxServices = configurations.get("yarn-site", {}).get("properties", {}).get('yarn.nodemanager.aux-services',
           services["configurations"]["yarn-site"]["properties"]["yarn.nodemanager.aux-services"])
       auxNames = [name.strip() for name in auxServices.split(",") if name.strip()]
-      spark3ShuffleWanted = 'SPARK3' in servicesList and self.spark3IsOnEveryNodeManager(services)
+      spark3ShuffleWanted = 'SPARK3' in servicesList
       if spark3ShuffleWanted and 'spark3_shuffle' not in auxNames:
         # before the templated entries, which may render empty
         position = next((index for index, name in enumerate(auxNames) if name.startswith("{{")), len(auxNames))
         auxNames.insert(position, 'spark3_shuffle')
-        self.logger.info("ServiceAdvisor Spark3 is installed on every NodeManager host - spark3_shuffle is added")
+        self.logger.info("ServiceAdvisor Spark3 is installed - spark3_shuffle is added")
         putYarnProperty('yarn.nodemanager.aux-services', ",".join(auxNames))
       elif not spark3ShuffleWanted and 'spark3_shuffle' in auxNames:
         auxNames.remove('spark3_shuffle')
