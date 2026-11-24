@@ -210,6 +210,16 @@ smokeuser_principal =  config['configurations']['cluster-env']['smokeuser_princi
 spark_thriftserver_hosts = default("/clusterHostInfo/spark3_thriftserver_hosts", [])
 has_spark_thriftserver = not len(spark_thriftserver_hosts) == 0
 
+# Ranger authorization of YARN: the servers submitting to YARN as the spark user need to be known by Ranger
+ranger_policymgr_url = default("/configurations/ranger-yarn-security/ranger.plugin.yarn.policy.rest.url", None)
+if ranger_policymgr_url:
+  ranger_policymgr_url = ranger_policymgr_url.rstrip('/')
+ranger_admin_username = default("/configurations/ranger-env/ranger_admin_username", None)
+ranger_admin_password = default("/configurations/ranger-env/ranger_admin_password", None)
+ranger_yarn_authorization = str(default("/configurations/ranger-yarn-plugin-properties/ranger-yarn-plugin-enabled", "No")).lower() == "yes" \
+  and len(default("/clusterHostInfo/ranger_admin_hosts", [])) > 0 \
+  and bool(ranger_policymgr_url) and bool(ranger_admin_username) and bool(ranger_admin_password)
+
 # Atlas Spark hook
 spark_atlas_application_properties = default('/configurations/spark3-atlas-application.properties', {})
 atlas_hook_filename = default('/configurations/atlas-env/metadata_conf_file', 'atlas-application.properties')

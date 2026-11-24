@@ -31,6 +31,7 @@ from resource_management.core.logger import Logger
 from resource_management.core import shell
 from setup_spark import *
 from spark_service import spark_service
+from spark_ranger import create_spark_ranger_user
 
 
 class JobHistoryServer(Script):
@@ -52,6 +53,7 @@ class JobHistoryServer(Script):
     env.set_params(params)
     
     self.configure(env)
+    create_spark_ranger_user()
     spark_service('jobhistoryserver', upgrade_type=upgrade_type, action='start')
 
   def stop(self, env, upgrade_type=None):
