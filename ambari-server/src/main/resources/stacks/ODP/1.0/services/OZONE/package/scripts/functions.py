@@ -40,8 +40,8 @@ def calc_xmn_from_xms(heapsize_str, xmn_percent, xmn_max):
   return str(result_xmn_val) + heapsize_unit
 
 def ensure_unit_for_memory(memory_size):
-  memory_size_values = re.findall('\d+', str(memory_size))
-  memory_size_unit = re.findall('\D+', str(memory_size))
+  memory_size_values = re.findall('\\d+', str(memory_size))
+  memory_size_unit = re.findall('\\D+', str(memory_size))
 
   if len(memory_size_values) > 0:
     unit = 'm'
