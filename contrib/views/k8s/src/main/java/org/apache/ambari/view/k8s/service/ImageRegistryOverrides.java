@@ -142,7 +142,8 @@ public final class ImageRegistryOverrides {
 
     /**
      * Moves an image reference onto {@code effectiveRegistry} (host or host/project, as the Helm
-     * repository resolves it). The Clemlab default prefix is replaced as a whole; any other registry
+     * repository resolves it). A value that is the Clemlab default registry itself becomes the target
+     * (a chart's {@code image.registry}); the Clemlab default prefix of an image is replaced as a whole; any other registry
      * host (quay.io, registry.k8s.io, ghcr.io, docker.io) is replaced by the target, Docker Hub's
      * {@code library/} is dropped, tags and digests are kept, and a reference already on the target
      * registry is returned unchanged. Mirrors therefore keep the upstream repository path, which is
@@ -153,6 +154,8 @@ public final class ImageRegistryOverrides {
         String ref = image.trim();
         String target = effectiveRegistry.trim().replaceAll("/+$", "");
         if (ref.equals(target) || ref.startsWith(target + "/")) return ref;
+        // A value that is the Clemlab registry itself (a chart's image.registry, global.dockerRegistry), not an image in it.
+        if (ref.equals(DEFAULT_IMAGE_REGISTRY)) return target;
         String path = ref;
         if (path.startsWith(DEFAULT_IMAGE_REGISTRY + "/")) {
             path = path.substring(DEFAULT_IMAGE_REGISTRY.length() + 1);

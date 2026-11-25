@@ -2,7 +2,7 @@
   "label": "OpenMetadata",
   "chart": "openmetadata",
   "secretName": "registry-credentials",
-  "version": "1.13.40",
+  "version": "1.13.41",
   "description": "Open-source metadata management platform. Centralise data discovery, lineage, data quality and governance across your Hadoop and cloud-native data stack.",
   "requiresContext": [
     { "capability": "atlas",
@@ -2672,6 +2672,21 @@
       }
     }
   },
+  "imageRegistryPaths": [
+    {"path": "image.registry", "default": "registry.clemlab.com/clemlabprojects"},
+    {"path": "ingestion.image.registry", "default": "registry.clemlab.com/clemlabprojects"},
+    {"path": "global.dockerRegistry", "default": "registry.clemlab.com/clemlabprojects"},
+    {"path": "dependencies.airflow.defaultAirflowRepository", "default": "registry.clemlab.com/clemlabprojects/openmetadata-ingestion"},
+    {"path": "dependencies.airflow.images.airflow.repository", "default": "registry.clemlab.com/clemlabprojects/openmetadata-ingestion"},
+    {"path": "dependencies.airflow.images.pod_template.repository", "default": "registry.clemlab.com/clemlabprojects/openmetadata-ingestion"},
+    {"path": "dependencies.airflow.images.statsd.repository", "default": "registry.clemlab.com/clemlabprojects/statsd-exporter"},
+    {"path": "dependencies.airflow.images.redis.repository", "default": "registry.clemlab.com/clemlabprojects/redis"},
+    {"path": "dependencies.airflow.images.pgbouncer.repository", "default": "registry.clemlab.com/clemlabprojects/airflow-pgbouncer"},
+    {"path": "dependencies.airflow.images.pgbouncerExporter.repository", "default": "registry.clemlab.com/clemlabprojects/airflow-pgbouncer-exporter"},
+    {"path": "dependencies.airflow.images.gitSync.repository", "default": "registry.clemlab.com/clemlabprojects/git-sync"},
+    {"path": "dependencies.airflow.airflowLocalDag.image.repository", "default": "registry.clemlab.com/clemlabprojects/openmetadata-ingestion"},
+    {"path": "dependencies.ingestion.image.repository", "default": "registry.clemlab.com/clemlabprojects/openmetadata-ingestion"}
+  ],
   "imagePullSecretTargets": [
     "dependencies.airflow.registry.secretName",
     "opensearch.imagePullSecrets[0].name"

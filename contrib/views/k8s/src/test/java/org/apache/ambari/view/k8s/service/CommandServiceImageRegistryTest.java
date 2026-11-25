@@ -72,6 +72,40 @@ public class CommandServiceImageRegistryTest {
     }
 
     @Test
+    void aValueThatIsTheClemlabRegistryItselfBecomesTheTarget() {
+        // A chart's image.registry or global.dockerRegistry holds the registry, not an image in it.
+        assertEquals(MIRROR, ImageRegistryOverrides.rewriteImageRegistry("registry.clemlab.com/clemlabprojects", MIRROR));
+        assertEquals("harbor.local", ImageRegistryOverrides.rewriteImageRegistry("registry.clemlab.com/clemlabprojects", "harbor.local"));
+    }
+
+    @Test
+    void openMetadataPullsEveryImageFromTheRepositoryRegistry() {
+        // The wizard sends none of these values: each path takes its definition default, moved onto the mirror.
+        Map<String, String> overrides = new java.util.HashMap<>();
+        ImageRegistryOverrides.applyImageRegistryPaths(null, "OPENMETADATA", MIRROR, new java.util.HashMap<>(), overrides);
+
+        assertEquals(MIRROR, overrides.get("image.registry"));
+        assertEquals(MIRROR, overrides.get("ingestion.image.registry"));
+        assertEquals(MIRROR, overrides.get("global.dockerRegistry"));
+        assertEquals(MIRROR + "/openmetadata-ingestion", overrides.get("dependencies.airflow.images.airflow.repository"));
+        assertEquals(MIRROR + "/openmetadata-ingestion", overrides.get("dependencies.airflow.defaultAirflowRepository"));
+        assertEquals(MIRROR + "/statsd-exporter", overrides.get("dependencies.airflow.images.statsd.repository"));
+        assertEquals(13, overrides.size());
+        overrides.forEach((path, value) -> org.junit.jupiter.api.Assertions.assertTrue(value.startsWith(MIRROR),
+                path + " still points at " + value));
+    }
+
+    @Test
+    void openMetadataKeepsTheClemlabRegistryWhenTheRepositoryUsesIt() {
+        Map<String, String> overrides = new java.util.HashMap<>();
+        ImageRegistryOverrides.applyImageRegistryPaths(null, "OPENMETADATA", "registry.clemlab.com/clemlabprojects",
+                new java.util.HashMap<>(), overrides);
+        assertEquals("registry.clemlab.com/clemlabprojects", overrides.get("image.registry"));
+        assertEquals("registry.clemlab.com/clemlabprojects/openmetadata-ingestion",
+                overrides.get("dependencies.airflow.images.airflow.repository"));
+    }
+
+    @Test
     void parsesPathEntriesWithAndWithoutDefaults() {
         assertArrayEquals(new String[] {"hub.image.name", null}, ImageRegistryOverrides.imageRegistryEntry(" hub.image.name "));
         assertArrayEquals(new String[] {"proxy.chp.image.name", "registry.clemlab.com/clemlabprojects/jupyterhub/configurable-http-proxy"},
