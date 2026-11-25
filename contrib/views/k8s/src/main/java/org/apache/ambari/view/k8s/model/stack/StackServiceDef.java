@@ -36,6 +36,18 @@ public class StackServiceDef {
      * release's resources).
      */
     public Map<String, String> formerCharts;
+    /**
+     * Add-on definitions only: the oldest KDPS view version this definition works with ("1.0.0.10"). A view older than
+     * that does not offer the add-on, and says why ({@code GET /services/addons}).
+     */
+    public String requiresKdps;
+    /**
+     * Set by KDPS for a definition read from the add-on directory, never from the file: {@code source} ("addon"),
+     * {@code icon} (true when the add-on ships icon.svg or icon.png, served at {@code /services/<KEY>/icon}).
+     * Null for the services built into the view.
+     */
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    public Map<String, Object> addon;
     public String description;
     public String version;
     /** Default Helm repo id this catalog entry expects the chart to come from.
@@ -358,7 +370,7 @@ public class StackServiceDef {
     }
 
     /** Compares dotted chart versions numerically, part by part ("1.44.0" > "1.43.21"). */
-    static int compareVersions(String a, String b) {
+    public static int compareVersions(String a, String b) {
         String[] pa = a.split("[.-]");
         String[] pb = b.split("[.-]");
         for (int i = 0; i < Math.max(pa.length, pb.length); i++) {

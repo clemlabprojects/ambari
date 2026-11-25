@@ -3,6 +3,7 @@ import supersetIcon from './superset.svg';
 import sqlAssistantIcon from './sql-assistant.svg';
 import openmetadataIcon from './openmetadata.svg';
 import genericIcon from './generic.svg';
+import { API_BASE_URL } from '../../api/client';
 
 export const SERVICE_ICONS: Record<string, string> = {
   TRINO: trinoIcon,
@@ -15,9 +16,15 @@ export const SERVICE_ICONS: Record<string, string> = {
 export const DEFAULT_SERVICE_ICON: string = genericIcon;
 
 /**
- * Icon for a service key. Falls back to a generic logo so a custom service (any
- * KDPS/services/<KEY>/service.json, incl. ones not in catalog.json) still renders a card/row icon.
+ * Icon for a service key. A built-in service has its own logo; an add-on installed on the Ambari server
+ * (definition.addon.icon) is served by the backend; anything else (a custom KDPS/services/<KEY>/service.json,
+ * an add-on without an icon) gets the generic logo.
  */
-export function serviceIcon(key: string | undefined | null): string {
-  return (key && SERVICE_ICONS[String(key).toUpperCase()]) || DEFAULT_SERVICE_ICON;
+export function serviceIcon(key: string | undefined | null, definition?: { addon?: { icon?: boolean } | null } | null): string {
+  const builtIn = key ? SERVICE_ICONS[String(key).toUpperCase()] : undefined;
+  if (builtIn) return builtIn;
+  if (key && definition?.addon?.icon) {
+    return `${API_BASE_URL}/services/${encodeURIComponent(String(key).toUpperCase())}/icon`;
+  }
+  return DEFAULT_SERVICE_ICON;
 }

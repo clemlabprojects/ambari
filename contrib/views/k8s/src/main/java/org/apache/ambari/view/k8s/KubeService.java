@@ -198,6 +198,36 @@ public class KubeService {
         }
     }
 
+    /**
+     * The add-on directory and what KDPS made of each folder in it: the add-ons it offers, and those it leaves out
+     * with the reason (a name clash with a built-in service, files others may write, a newer KDPS required).
+     */
+    @GET
+    @Path("/services/addons")
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response listServiceAddons() {
+        return Response.ok(getStackDefinitionService().addonStatus()).build();
+    }
+
+    /** The icon an add-on ships (icon.svg or icon.png); 404 for a built-in service or an add-on without one. */
+    @GET
+    @Path("/services/{name}/icon")
+    public Response getServiceAddonIcon(@PathParam("name") String name) {
+        java.nio.file.Path icon = getStackDefinitionService().addonIcon(name);
+        if (icon == null) return Response.status(Response.Status.NOT_FOUND).build();
+        try {
+            String type = icon.getFileName().toString().endsWith(".svg") ? "image/svg+xml" : "image/png";
+            return Response.ok(java.nio.file.Files.readAllBytes(icon), type)
+                    .header("Cache-Control", "max-age=300")
+                    // An SVG may hold scripts: shown as an image it never runs them, opened on its own it must not either.
+                    .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .build();
+        } catch (java.io.IOException e) {
+            return Response.status(Response.Status.NOT_FOUND).build();
+        }
+    }
+
     @GET
     @Path("/users/me/permissions")
     @Produces(MediaType.APPLICATION_JSON)

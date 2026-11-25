@@ -1646,7 +1646,7 @@ const HelmReleasesPage: React.FC = () => {
                 )}
                 {offeredServiceKeys.map((key) => {
                   const svc = serviceDefinitions[key];
-                  const icon = serviceIcon(key);
+                  const icon = serviceIcon(key, svc);
                   return (
                     <Col key={key} xs={24} sm={12}>
                       <div

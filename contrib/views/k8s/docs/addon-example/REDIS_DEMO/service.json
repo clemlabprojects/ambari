@@ -1,0 +1,23 @@
+{
+  "_comment": "Example KDPS add-on: Redis from the redis chart, installed as /var/lib/ambari-server/resources/kdps-addons/REDIS_DEMO. See docs/ADDONS.md.",
+  "label": "Redis (add-on example)",
+  "chart": "redis",
+  "version": "23.0.4",
+  "repoId": "clemlab",
+  "secretName": "regcred",
+  "requiresKdps": "1.0.0.10",
+  "description": "A single Redis server, installed from an add-on package rather than with KDPS itself.",
+  "form": [
+    {"name": "releaseName", "label": "Release name", "type": "string", "required": true, "defaultValue": "redis-demo",
+     "pattern": "^(?=.{1,53}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+     "validationHint": "At most 53 lower-case letters, digits and '-', starting and ending with a letter or digit."},
+    {"name": "namespace", "label": "Kubernetes namespace", "type": "string", "required": true, "defaultValue": "redis-demo"},
+    {"name": "architecture", "label": "Architecture", "type": "select", "defaultValue": "standalone",
+     "options": [{"label": "One server", "value": "standalone"}, {"label": "Primary and replicas", "value": "replication"}],
+     "help": "One server, or a primary with read replicas."},
+    {"name": "auth.enabled", "label": "Require a password", "type": "boolean", "defaultValue": true,
+     "help": "The chart generates the password and keeps it in a Secret of the release."},
+    {"name": "master.persistence.enabled", "label": "Keep the data on a volume", "type": "boolean", "defaultValue": false,
+     "help": "Off: the data is lost when the pod restarts."}
+  ]
+}

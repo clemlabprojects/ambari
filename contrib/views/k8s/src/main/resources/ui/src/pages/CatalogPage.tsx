@@ -156,7 +156,7 @@ const CatalogPage: React.FC = () => {
             const needs = detectCapabilities(svc);
             const certManagerOk = !!capabilities?.certManager?.installed;
             const externalSecretsOk = !!capabilities?.externalSecrets?.installed;
-            const iconUrl = serviceIcon(name);
+            const iconUrl = serviceIcon(name, svc);
             const appVersion = appVersions[name];
             return (
               <Col xs={24} sm={12} md={12} lg={8} xl={6} key={name} style={{ display: 'flex' }}>

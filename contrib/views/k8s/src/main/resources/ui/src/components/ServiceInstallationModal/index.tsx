@@ -1446,7 +1446,7 @@ const handleServiceChange = (value: string) => {
           <Form.Item name="svcKey" label={serviceLabel} rules={[{ required: true, message: 'Please choose a service' }]}>
             <Select onChange={handleServiceChange} disabled={mode === 'upgrade'} optionLabelProp="label">
               {Object.keys(availableServices).map(key => {
-                const icon = serviceIcon(key);
+                const icon = serviceIcon(key, availableServices[key]);
                 const label = availableServices[key].label;
                 const optionContent = (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
