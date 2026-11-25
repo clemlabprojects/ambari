@@ -172,7 +172,7 @@
           "configurations": [
             {
               "ozone-site": {
-                "hdds.datanode.http.auth.type": "true"
+                "hdds.datanode.http.auth.type": "kerberos"
               }
             }
           ],
