@@ -830,6 +830,16 @@
       <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Configure Spark3 Thrift Server container Java homes">
         <task xsi:type="configure" id="spark3_thrift_yarn_java_home_defaults"/>
       </execute-stage>
+      <!-- configure tasks listed as SPARK3_CLIENT pre-upgrade only are not run by an express upgrade -->
+      <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Default the Spark3 Atlas hook flag">
+        <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_default_flag"/>
+      </execute-stage>
+      <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Configure the Spark3 Atlas hook">
+        <task xsi:type="configure" id="odp_1_3_0_spark3_atlas_hook_configs"/>
+      </execute-stage>
+      <execute-stage service="SPARK3" component="SPARK3_CLIENT" title="Run Spark3 on the secondary JDK">
+        <task xsi:type="configure" id="odp_1_3_2_0_spark3_secondary_jdk_java_home"/>
+      </execute-stage>
     </group>
 
     <group xsi:type="restart" name="SPARK3" title="Spark3">
