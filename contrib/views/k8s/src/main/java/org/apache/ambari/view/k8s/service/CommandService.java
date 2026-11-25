@@ -3514,6 +3514,9 @@ public class CommandService {
                         auditConfig.put("xasecure.audit.destination.solr.batch.filespool.dir", rangerAuditSpoolBase + "/solr");
                         auditConfig.put("xasecure.audit.destination.hdfs.batch.filespool.dir", rangerAuditSpoolBase + "/hdfs");
                     }
+                    RangerAuditDestinations.kerberosLoginValues(auditConfig, rangerAuditKerberosPrincipal,
+                            rangerAuditKerberosKeytab).forEach((path, value) ->
+                            this.commandUtils.addOverride(params, path, value));
                     LOG.info("Ranger audit destinations for '{}': solr={} hdfs={} log4j={}", rangerRepositoryName,
                             auditConfig.get("xasecure.audit.destination.solr"),
                             auditConfig.get("xasecure.audit.destination.hdfs"),

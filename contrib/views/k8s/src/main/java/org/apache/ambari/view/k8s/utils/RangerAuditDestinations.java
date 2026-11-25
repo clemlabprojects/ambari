@@ -174,6 +174,39 @@ public final class RangerAuditDestinations {
     }
 
     /** The wizard's mode for a destination; anything but {@code on} or {@code off} follows the context. */
+    /** Chart value: the principal the audit writers log in with ({@code ranger.audit.kerberos.principal}). */
+    public static final String KERBEROS_PRINCIPAL_VALUE = "ranger.audit.kerberos.principal";
+    /** Chart value: the path, in the pod, of the keytab that holds it ({@code ranger.audit.kerberos.keytab}). */
+    public static final String KERBEROS_KEYTAB_VALUE = "ranger.audit.kerberos.keytab";
+
+    /**
+     * The chart values that give the audit writers a Kerberos login of the JVM's own, when the plugin audits to a
+     * Kerberized Solr: the chart writes a JAAS file with them and starts Trino with
+     * {@code -Djava.security.auth.login.config}. The {@code Client} entry {@link #apply} writes into the audit
+     * properties is not enough from JDK 24 on: a thread no longer inherits the Kerberos identity of the thread that
+     * created it, so the Solr client's worker threads have none, Java falls back to the
+     * {@code com.sun.security.jgss.krb5.initiate} entry, which only a JAAS file can hold (Ranger's in-memory
+     * configuration cuts an entry name at its first dot), and without it prompts for a password
+     * ("Cannot read from System.in"): Solr answers 401 and no audit event arrives.
+     *
+     * @param audit             the audit properties {@link #apply} wrote
+     * @param kerberosPrincipal the principal the plugin's keytab holds, or null
+     * @param kerberosKeytab    the keytab's path in the pod, or null
+     * @return the values to set, by dotted path; empty when Solr audit is off or the plugin has no Kerberos login
+     */
+    public static Map<String, String> kerberosLoginValues(Map<String, String> audit, String kerberosPrincipal,
+                                                          String kerberosKeytab) {
+        boolean solr = audit != null && "true".equalsIgnoreCase(audit.get("xasecure.audit.destination.solr"));
+        if (!solr || kerberosPrincipal == null || kerberosPrincipal.isBlank()
+                || kerberosKeytab == null || kerberosKeytab.isBlank()) {
+            return Map.of();
+        }
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        values.put(KERBEROS_PRINCIPAL_VALUE, kerberosPrincipal.trim());
+        values.put(KERBEROS_KEYTAB_VALUE, kerberosKeytab.trim());
+        return values;
+    }
+
     private static String mode(Map<String, Object> values, String name) {
         String mode = text(values, name);
         if (mode == null) {

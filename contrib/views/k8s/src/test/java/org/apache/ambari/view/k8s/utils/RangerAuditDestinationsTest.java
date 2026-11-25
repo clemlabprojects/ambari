@@ -288,4 +288,25 @@ class RangerAuditDestinationsTest {
         assertTrue(RangerAuditDestinations.apply(audit, Map.of(),
                 wizard("solrMode", "off", "hdfsMode", "off"), List.of("ranger.auditSolrEnabled"), null, null, true).isEmpty());
     }
+
+    @Test
+    void theAuditWritersGetAKerberosLoginOfTheJvmWhenSolrAuditIsOnWithKerberos() {
+        java.util.Map<String, String> audit = new java.util.HashMap<>();
+        audit.put("xasecure.audit.destination.solr", "true");
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Map.of("ranger.audit.kerberos.principal", "trino-t1@EXAMPLE.COM",
+                        "ranger.audit.kerberos.keytab", "/etc/security/keytabs/service.keytab"),
+                RangerAuditDestinations.kerberosLoginValues(audit, " trino-t1@EXAMPLE.COM ",
+                        "/etc/security/keytabs/service.keytab"));
+    }
+
+    @Test
+    void noKerberosLoginValuesWithoutSolrAuditOrWithoutAKeytab() {
+        java.util.Map<String, String> on = java.util.Map.of("xasecure.audit.destination.solr", "true");
+        java.util.Map<String, String> off = java.util.Map.of("xasecure.audit.destination.solr", "false");
+        org.junit.jupiter.api.Assertions.assertTrue(RangerAuditDestinations.kerberosLoginValues(off, "p@R", "/k").isEmpty());
+        org.junit.jupiter.api.Assertions.assertTrue(RangerAuditDestinations.kerberosLoginValues(on, null, "/k").isEmpty());
+        org.junit.jupiter.api.Assertions.assertTrue(RangerAuditDestinations.kerberosLoginValues(on, "p@R", " ").isEmpty());
+        org.junit.jupiter.api.Assertions.assertTrue(RangerAuditDestinations.kerberosLoginValues(null, "p@R", "/k").isEmpty());
+    }
 }

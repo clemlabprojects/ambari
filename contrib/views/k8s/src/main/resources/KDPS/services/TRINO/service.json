@@ -3,7 +3,7 @@
   "chart": "trino",
   "formerCharts": {"clemlab-trino": "1.44.0"},
   "secretName": "registry-credentials",
-  "version": "1.44.2",
+  "version": "1.44.3",
   "dynamicValues": [
     "AMBARI_KERBEROS_REALM:global.security.kerberos.realm",
     "AMBARI_OIDC_REALM:global.security.auth.oidc.realm",
