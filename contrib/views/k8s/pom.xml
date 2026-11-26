@@ -370,11 +370,11 @@ limitations under the License.
             <artifactId>helm-java</artifactId>
             <version>${helm-java.version}</version>
             <!--
-              The umbrella artifact transitively pulls every platform-specific native jar.
-              Each registers its own META-INF/services/com.marcnuri.helm.jni.NativeLibrary provider
-              and NativeLibrary.getInstance() returns whichever ServiceLoader iterates first — i.e.
-              classpath-order dependent and non-deterministic. Exclude them all here and let the
-              dependency immediately below add back exactly one based on ${ambari.grafana.arch}.
+              The umbrella artifact transitively pulls every platform-specific native jar (about 27 MB each).
+              From 0.0.23 helm-java picks the one that matches the running JVM, so a second one would only cost
+              size; a view that only carries another architecture's fails with an error naming os.arch.
+              Exclude them all here and let the dependency immediately below add back exactly one, based on
+              ${ambari.grafana.arch}.
             -->
             <exclusions>
                 <exclusion>
@@ -530,9 +530,6 @@ limitations under the License.
                         <exclude>src/main/resources/keda-2.18.0-crds.yaml</exclude>
                         <exclude>src/main/resources/kube-prometheus-stack-77.5.0-crds.yaml</exclude>
                         <exclude>src/main/resources/kube-prometheus-stack-78.3.2-crds.yaml</exclude>
-                        <!-- Java ServiceLoader registration for the helm-java NativeLibrary provider;
-                             a service-provider file carries no license header (same as go.sum above). -->
-                        <exclude>src/main/resources/META-INF/services/*</exclude>
                         <!-- Operational docs; markdown does not carry a license header. -->
                         <exclude>docs/**/*.md</exclude>
                     </excludes>
@@ -800,19 +797,6 @@ limitations under the License.
                                              excludes="linux-${ambari.grafana.arch}-${helm-java.version}.jar"
                                              erroronmissingdir="false"/>
                                 </delete>
-                                <!-- Strip the ServiceLoader registration from the remaining native jar so the
-                                     view's own KdpsHelmNativeLibrary provider (exec-safe extraction dir, arch
-                                     picked by os.arch) is the ONLY registered com.marcnuri.helm.jni.NativeLibrary.
-                                     The Ambari ViewClassLoader lists WEB-INF/lib jars in arbitrary order BEFORE
-                                     the view classes, so without this strip the stock provider (java.io.tmpdir
-                                     extraction — broken on noexec /tmp hosts) wins the ServiceLoader race. -->
-                                <zip destfile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar">
-                                    <zipfileset src="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-${helm-java.version}.jar"
-                                                excludes="META-INF/services/com.marcnuri.helm.jni.NativeLibrary"/>
-                                </zip>
-                                <move file="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-stripped.jar"
-                                      tofile="${project.build.directory}/classes/WEB-INF/lib/linux-${ambari.grafana.arch}-${helm-java.version}.jar"
-                                      overwrite="true"/>
                                 <!-- Exactly the target arch's native jar must be left, nothing for another arch. -->
                                 <fileset id="helm.native.jars" dir="${project.build.directory}/classes/WEB-INF/lib"
                                          includes="linux-*-*.jar,darwin-*-*.jar"/>
@@ -1190,12 +1174,6 @@ chmod +x "${OUT_DIR}/load.sh"
                     <include>*.json</include>
                     <include>KDPS/**</include>
                     <include>KDPS**</include>
-                    <!-- ServiceLoader registration of KdpsHelmNativeLibrary (exec-safe helm-java
-                         loader). This whitelist REPLACES Maven's default resource handling, so
-                         without an explicit include the services file is silently dropped and
-                         NativeLibrary.getInstance() finds no provider at all (the native jars'
-                         own registrations are stripped at prepare-package). -->
-                    <include>META-INF/services/**</include>
                 </includes>
             </resource>
             <resource>

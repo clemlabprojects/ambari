@@ -19,11 +19,11 @@ helm-java
 ```
 
 Each per-arch jar registers its own `META-INF/services/com.marcnuri.helm.jni.NativeLibrary`
-provider entry. helm-java's `NativeLibrary.getInstance()` does **no architecture
-detection** — it just iterates `ServiceLoader.load(NativeLibrary.class)` and
-returns whichever implementation the iterator surfaces first. That order is
-determined by classpath ordering, which depends on filesystem and classloader
-implementation details — i.e. it's not deterministic across builds.
+provider entry. Up to helm-java 0.0.22, `NativeLibrary.getInstance()` did **no architecture
+detection**: it returned whichever implementation the classpath order surfaced first, which is
+not deterministic across builds. From 0.0.23 the provider that matches the running JVM's OS and
+architecture is selected whatever the order, and a view that carries only another architecture's
+library fails with an error naming `os.arch`.
 
 Symptom on `x86_64` master nodes: `/tmp/helm-java<rand>/helm-linux-arm64.so`
 extracted, then `UnsatisfiedLinkError` when the Releases tab tries to call
@@ -122,10 +122,18 @@ holds `WEB-INF/lib/linux-amd64-<helm-java version>.jar` in its `k8s-view-*.jar`,
 the amd64 image `GET .../api/helm/releases` answers 200: the namespaces call
 alone passes even with the wrong library, because it does not use Helm.
 
-## Why not auto-detect at runtime?
+## Why only one architecture per view?
 
-helm-java upstream considers this an explicit design choice — they expect
-consumers to pin to exactly one arch at build time via dependency exclusions
-(or Maven profile activation). Auto-detection would require shipping all
-arch jars on every node, which costs ~93 MB per unused native lib in the
-final WAR. After exclusions, the K8S view jar dropped from 185 MB to 137 MB.
+helm-java 0.0.23 does select the native library by platform at runtime, so shipping every
+architecture would work. The view still packages exactly one, for size: each unused native jar
+costs about 27 MB in every `ambari-server` package and image.
+
+## Where the library is extracted
+
+helm-java extracts its native library before loading it, by default under `java.io.tmpdir`,
+which hardened hosts often mount `noexec`. The view sets the system property
+`com.marcnuri.jkube-helm.tempDir` to `<view working dir>/helm-native` before its first Helm call
+(`ViewConfigurationService`); helm-java creates the directory at its first use. If it cannot,
+helm-java fails with an error naming the property; it does not fall back to `java.io.tmpdir`.
+Until 0.0.22 the view carried a provider of its own for this (`KdpsHelmNativeLibrary`) and
+stripped the registration from the native jar at build time; both are gone.

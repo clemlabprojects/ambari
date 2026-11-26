@@ -57,6 +57,9 @@ import java.util.*;
  */
 public class ViewConfigurationService {
     private static final Logger LOG = LoggerFactory.getLogger(ViewConfigurationService.class);
+
+    /** helm-java system property: the directory its native library is extracted under (0.0.23 and later). */
+    static final String HELM_NATIVE_TEMP_DIR_PROPERTY = "com.marcnuri.jkube-helm.tempDir";
     
     static final String KUBECONFIG_PATH_KEY = "kubeconfig.path";
     private static final String KUBECONFIG_UPLOADED = InstanceSettings.CONFIGURED_KEY;
@@ -174,10 +177,12 @@ public class ViewConfigurationService {
         // Point the helm-java native-library extraction at the (exec-permitted) view working dir
         // BEFORE anything touches com.marcnuri.helm.Helm — on hardened hosts java.io.tmpdir is
         // often mounted noexec, and Helm$HelmLibHolder's static-init failure would poison the
-        // class for the whole JVM lifetime.
+        // class for the whole JVM lifetime. helm-java reads the property when its library is first
+        // loaded, creates the directory then, and fails with an error naming the property when it
+        // cannot. Nothing is written here: a view that is only looked at leaves no file behind.
         try {
-            org.apache.ambari.view.k8s.service.helm.KdpsHelmNativeLibrary.setExtractionBaseDir(
-                    new File(getConfigurationDirectoryPath(), "helm-native").toPath());
+            System.setProperty(HELM_NATIVE_TEMP_DIR_PROPERTY,
+                    new File(getConfigurationDirectoryPath(), "helm-native").getPath());
         } catch (Exception e) {
             LOG.warn("Could not set helm-java extraction dir: {}", e.toString());
         }
