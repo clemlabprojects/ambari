@@ -255,13 +255,16 @@
         "HIVE_SERVER": {
           "STACK-SELECT-PACKAGE": "hive-server2",
           "INSTALL": [
-            "hive-server2"
+            "hive-server2",
+            "hive-webhcat"
           ],
           "PATCH": [
-            "hive-server2"
+            "hive-server2",
+            "hive-webhcat"
           ],
           "STANDARD": [
-            "hive-server2"
+            "hive-server2",
+            "hive-webhcat"
           ]
         },
         "HIVE_SERVER_INTERACTIVE": {
@@ -279,13 +282,16 @@
         "HIVE_CLIENT": {
           "STACK-SELECT-PACKAGE": "hive-client",
           "INSTALL": [
-            "hive-client"
+            "hive-client",
+            "hive-webhcat"
           ],
           "PATCH": [
-            "hive-client"
+            "hive-client",
+            "hive-webhcat"
           ],
           "STANDARD": [
-            "hadoop-client"
+            "hadoop-client",
+            "hive-webhcat"
           ]
         }
       },
