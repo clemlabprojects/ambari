@@ -20,10 +20,10 @@ export const DEFAULT_SERVICE_ICON: string = genericIcon;
  * (definition.addon.icon) is served by the backend; anything else (a custom KDPS/services/<KEY>/service.json,
  * an add-on without an icon) gets the generic logo.
  */
-export function serviceIcon(key: string | undefined | null, definition?: { addon?: { icon?: boolean } | null } | null): string {
+export function serviceIcon(key: string | undefined | null, definition?: unknown): string {
   const builtIn = key ? SERVICE_ICONS[String(key).toUpperCase()] : undefined;
   if (builtIn) return builtIn;
-  if (key && definition?.addon?.icon) {
+  if (key && (definition as { addon?: { icon?: boolean } | null } | null | undefined)?.addon?.icon) {
     return `${API_BASE_URL}/services/${encodeURIComponent(String(key).toUpperCase())}/icon`;
   }
   return DEFAULT_SERVICE_ICON;

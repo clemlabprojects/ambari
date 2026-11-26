@@ -18,7 +18,7 @@
 
 // ui/src/pages/HelmReleasesPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress, Radio } from 'antd';
+import { Alert, Typography, Button, Table, Input, Space, Modal, message, Dropdown, Skeleton, Result, Tag, Tooltip, Switch, Descriptions, Row, Col, Progress, Radio, Select } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { getAvailableServices, getReleaseValues, uninstallHelm, getReleaseKdpsObjects, getReleaseExternalRegistrations, type ExternalCleanupMode, type ExternalCleanupReport, getHelmReleases, getReleaseStatus, submitHelmDeploy, regenerateReleaseKeytabs, reapplyReleaseRangerRepository, registerReleaseOidcClient, getReleaseActionRefusals, upgradeReleaseChart, rollbackReleaseToRevision, getReleaseHistory, getReleaseTlsState, renewReleaseTls, triggerReplayableAction, checkReleaseAtlasFederation, fixRestartAtlasFederation, getAmbariRequestProgress, adoptRelease, retryReleaseReconcile, type AtlasFederationCheck, type ReleaseTlsEntry, type ReplayableAction } from '../api/client';
 import { EXTERNAL_CLEANUP_CHOICES, UNINSTALL_POLARIS_REVOCATION, uninstallExternalRemovals, uninstallFollowUps, uninstallKdpsObjectRemovals, uninstallSignInRemovals } from '../utils/uninstallFollowUps';
@@ -38,6 +38,7 @@ import type { MenuProps } from 'antd';
 import { PlusOutlined, MoreOutlined, SyncOutlined, DeleteOutlined, ReloadOutlined, InfoCircleOutlined, KeyOutlined, SafetyCertificateOutlined, ExperimentOutlined, ArrowUpOutlined, RollbackOutlined, DatabaseOutlined } from '@ant-design/icons';
 import { useClusterStatus } from '../context/ClusterStatusContext';
 import { useViewedCluster } from '../context/ViewedClusterContext';
+import { ALL_CLUSTERS, RELEASES_PER_CLUSTER, listReleasesAcrossClusters, releaseRowKey, type UnlistedCluster } from './releasesAcrossClusters';
 import StatusTag from '../components/common/StatusTag';
 import PermissionGuard from '../components/common/PermissionGuard';
 import BackgroundOperationsModal from '../components/common/BackgroundOperationsModal';
@@ -82,8 +83,27 @@ const ExternalCleanupChoice: React.FC<{
 
 const HelmReleasesPage: React.FC = () => {
   const { status, refresh, nodes, events } = useClusterStatus();
-  // The releases listed are those of the cluster chosen in the top bar.
-  const { cluster: viewedCluster } = useViewedCluster();
+  // The releases of every cluster KDPS knows, unless the operator picks one here or in the top bar.
+  const { cluster: viewedCluster, clusters } = useViewedCluster();
+  const severalClusters = clusters.length > 1;
+  const [listedScope, setListedScope] = useState<string>(() => {
+    try { return localStorage.getItem('kdps.releases.cluster') || ALL_CLUSTERS; } catch { return ALL_CLUSTERS; }
+  });
+  const chooseListedScope = (scope: string) => {
+    setListedScope(scope);
+    try { localStorage.setItem('kdps.releases.cluster', scope); } catch { /* remembered for this page only */ }
+  };
+  // A remembered cluster that KDPS no longer knows: every cluster is listed.
+  const scope = !severalClusters ? 'default'
+    : (listedScope === ALL_CLUSTERS || clusters.some(c => c.id === listedScope) ? listedScope : ALL_CLUSTERS);
+  const listsAllClusters = scope === ALL_CLUSTERS;
+  // Every release of every cluster, read at once, paged here (one request per cluster).
+  const [allClusterRows, setAllClusterRows] = useState<HelmRelease[]>([]);
+  const [unlistedClusters, setUnlistedClusters] = useState<UnlistedCluster[]>([]);
+  const clusterName = (id?: string) => {
+    const c = clusters.find(k => k.id === (id || 'default'));
+    return c?.name || id || 'default';
+  };
   const navigate = useNavigate();
   const [serviceDefinitions, setServiceDefinitions] = useState<AvailableServices>({});
   const [servicesLoaded, setServicesLoaded] = useState(false);
@@ -158,7 +178,7 @@ const HelmReleasesPage: React.FC = () => {
     () => Object.keys(serviceDefinitions).filter((key) => offeredOnPlatform(serviceDefinitions[key], capabilities?.platform)),
     [serviceDefinitions, capabilities?.platform]);
 
-  const releaseKey = useCallback((release: HelmRelease) => `${release.namespace}/${release.name}`, []);
+  const releaseKey = useCallback((release: HelmRelease) => releaseRowKey(release), []);
 
   /**
    * Merge live status (queried separately) into a base release record without
@@ -223,16 +243,31 @@ const HelmReleasesPage: React.FC = () => {
    * and reset pagination state. Errors are surfaced to the user and we clear
    * stale data on failure to avoid displaying outdated rows.
    */
-  const fetchReleases = React.useCallback(async (pageNum = pageIndex, size = pageSize, managedOnly = !showAllReleases) => {
+  const fetchReleases = React.useCallback(async (pageNum = pageIndex, size = pageSize, managedOnly = !showAllReleases,
+                                                 listed: string = scope) => {
     setIsLoading(true);
     try {
       const offset = (pageNum - 1) * size;
-      // Filter to KDPS-managed releases server-side (before pagination) unless "Show all" is on, so
-      // managed releases that sort onto a later page are not hidden by a page-local filter.
-      const releasesResponse = await getHelmReleases(size, offset, managedOnly, viewedCluster);
-      const items = releasesResponse.items || [];
+      let items: HelmRelease[];
+      if (listed === ALL_CLUSTERS && clusters.length > 1) {
+        // Every cluster at once, paged here: a release deployed to another cluster is not missing from the list.
+        const across = await listReleasesAcrossClusters<HelmRelease>(clusters,
+          (cluster) => getHelmReleases(RELEASES_PER_CLUSTER, 0, managedOnly, cluster));
+        setAllClusterRows(across.items);
+        setUnlistedClusters(across.unlisted);
+        items = across.items.slice(offset, offset + size);
+        setTotalReleases(across.items.length);
+      } else {
+        // Filter to KDPS-managed releases server-side (before pagination) unless "Show all" is on, so
+        // managed releases that sort onto a later page are not hidden by a page-local filter.
+        const releasesResponse = await getHelmReleases(size, offset, managedOnly,
+          listed === 'default' || listed === ALL_CLUSTERS ? undefined : listed);
+        items = (releasesResponse.items || []) as HelmRelease[];
+        setAllClusterRows([]);
+        setUnlistedClusters([]);
+        setTotalReleases(releasesResponse.total || 0);
+      }
       setHelmReleases(items);
-      setTotalReleases(releasesResponse.total || 0);
       setPageIndex(pageNum);
       setPageSize(size);
       // Kick off per-release TLS state lookups in parallel — non-blocking, populates
@@ -244,7 +279,7 @@ const HelmReleasesPage: React.FC = () => {
       items
         .filter((r) => r.managedByUi || r.deploymentMode === 'FLUX_GITOPS')
         .forEach((r) => {
-          const key = `${r.namespace}/${r.name}`;
+          const key = releaseRowKey(r);
           getReleaseTlsState(r.namespace, r.name, r.kubernetesCluster)
             .then((entries) => setTlsByRelease((prev) => ({ ...prev, [key]: entries })))
             .catch(() => setTlsByRelease((prev) => ({ ...prev, [key]: [] })));
@@ -259,19 +294,33 @@ const HelmReleasesPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [pageIndex, pageSize, showAllReleases, viewedCluster]);
+  }, [pageIndex, pageSize, showAllReleases, scope, clusters]);
 
+  // The releases listed again, from the first page, when the clusters are known or another scope is chosen.
+  const clusterIds = clusters.map(c => c.id).join(',');
   useEffect(() => {
-    void fetchReleases(1, pageSize);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    void fetchReleases(1, pageSize, !showAllReleases, scope);
+  }, [scope, clusterIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Another cluster chosen in the top bar: its releases, from the first page.
-  const listedCluster = React.useRef(viewedCluster);
+  // Another cluster chosen in the top bar: the page lists that cluster.
+  const viewedInTopBar = React.useRef(viewedCluster);
   useEffect(() => {
-    if (listedCluster.current === viewedCluster) return;
-    listedCluster.current = viewedCluster;
-    void fetchReleases(1, pageSize);
+    if (viewedInTopBar.current === viewedCluster) return;
+    viewedInTopBar.current = viewedCluster;
+    chooseListedScope(viewedCluster || 'default');
   }, [viewedCluster]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Another page of the list: cut from the rows already read when every cluster is listed. */
+  const showPage = (pageNum: number, size: number) => {
+    if (listsAllClusters && clusters.length > 1) {
+      const offset = (pageNum - 1) * size;
+      setHelmReleases(allClusterRows.slice(offset, offset + size));
+      setPageIndex(pageNum);
+      setPageSize(size);
+      return;
+    }
+    void fetchReleases(pageNum, size);
+  };
 
   /** Redeploys a release from this page: an upgrade, for which a protected cluster asks the operator its name. */
   const redeploy = (payload: ReturnType<typeof releaseRedeployPayload>) =>
@@ -731,7 +780,7 @@ const HelmReleasesPage: React.FC = () => {
     const loadActionRefusals = async (record: HelmRelease) => {
       try {
         const answer = await getReleaseActionRefusals(record.namespace, record.name, record.kubernetesCluster);
-        setActionRefusals(prev => ({ ...prev, [`${record.namespace}/${record.name}`]: answer?.refusals || {} }));
+        setActionRefusals(prev => ({ ...prev, [releaseRowKey(record)]: answer?.refusals || {} }));
       } catch {
         // The actions stay enabled; running one says why it cannot run.
       }
@@ -778,7 +827,7 @@ const HelmReleasesPage: React.FC = () => {
       const supportsRangerReapply = !!(serviceDefinition?.ranger && Object.keys(serviceDefinition.ranger).length > 0);
       const supportsOidcRegistration = !!(serviceDefinition?.oidc && serviceDefinition.oidc.length > 0);
       const upgradeTargetVersion = upgradeAvailableFor(record);
-      const refusals = actionRefusals[`${record.namespace}/${record.name}`];
+      const refusals = actionRefusals[releaseRowKey(record)];
       const repairState = (action: RepairAction) => repairActionState(refusals, action);
 
       return ([
@@ -1069,7 +1118,7 @@ const HelmReleasesPage: React.FC = () => {
      * a "Renew" button when the source is renew-capable.
      */
     const renderTlsBadges = (release: HelmRelease) => {
-      const key = `${release.namespace}/${release.name}`;
+      const key = releaseRowKey(release);
       const entries = tlsByRelease[key];
       if (entries === undefined) return <Text type="secondary">…</Text>;
       if (entries.length === 0) return <Text type="secondary">—</Text>;
@@ -1165,6 +1214,11 @@ const HelmReleasesPage: React.FC = () => {
             </Space>
           )
         },
+        ...(severalClusters ? [{
+          title: 'Cluster', key: 'cluster', width: 140,
+          render: (_: any, r: HelmRelease) => <Tag>{clusterName(r.kubernetesCluster)}</Tag>,
+          sorter: (a: any, b: any) => clusterName(a.kubernetesCluster).localeCompare(clusterName(b.kubernetesCluster)),
+        }] : []),
         { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', className: 'kdps-mono', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
         {
           title: 'Chart',
@@ -1331,6 +1385,18 @@ const HelmReleasesPage: React.FC = () => {
                       value={releaseSearch}
                       onChange={(e) => setReleaseSearch(e.target.value)}
                     />
+                    {severalClusters && (
+                      <Select
+                        aria-label="Cluster"
+                        style={{ width: 200 }}
+                        value={scope}
+                        onChange={(value: string) => chooseListedScope(value)}
+                        options={[
+                          { value: ALL_CLUSTERS, label: 'All clusters' },
+                          ...clusters.map(c => ({ value: c.id, label: c.name || c.id })),
+                        ]}
+                      />
+                    )}
                     <Space>
                       <span>Show all</span>
                       <Switch size="small" checked={showAllReleases}
@@ -1395,10 +1461,15 @@ const HelmReleasesPage: React.FC = () => {
                 );
               })()}
             </div>
+            {listsAllClusters && unlistedClusters.length > 0 && (
+              <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+                message={`The releases of ${unlistedClusters.map(c => c.name).join(', ')} could not be read: they are not listed.`}
+                description={unlistedClusters.map(c => `${c.name}: ${c.error}`).join(' · ')} />
+            )}
             <Table
               columns={columns}
               dataSource={displayed}
-              rowKey={(releaseRecord:any) => `${releaseRecord.namespace}/${releaseRecord.name}`}
+              rowKey={(releaseRecord:any) => releaseRowKey(releaseRecord)}
               loading={isLoading || status === 'loading'}
               size="small"
               onRow={(record: any) => ({
@@ -1421,7 +1492,7 @@ const HelmReleasesPage: React.FC = () => {
                 current: pageIndex,
                 pageSize,
                 total: totalReleases,
-                onChange: (p, ps) => fetchReleases(p, ps),
+                onChange: (p, ps) => showPage(p, ps),
                 showSizeChanger: true,
                 showTotal: (t, range) => `${range[0]}-${range[1]} of ${t}`
               }}
