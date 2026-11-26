@@ -93,6 +93,12 @@ dfs_dn_http_addr = default('/configurations/hdfs-site/dfs.datanode.http.address'
 dfs_dn_https_addr = default('/configurations/hdfs-site/dfs.datanode.https.address', None)
 dfs_http_policy = default('/configurations/hdfs-site/dfs.http.policy', None)
 dfs_dn_ipc_address = config['configurations']['hdfs-site']['dfs.datanode.ipc.address']
+# The rolling upgrade reaches the local DataNode on this address with the DataNode's own principal
+# (dn/<host>), and the Hadoop client binds its socket to that host: it cannot connect to a wildcard or
+# loopback address, the default 0.0.0.0:8010 included. Use this host's name instead.
+_dn_ipc_host, _dn_ipc_sep, _dn_ipc_port = dfs_dn_ipc_address.rpartition(':')
+if _dn_ipc_sep and _dn_ipc_host in ('', '0.0.0.0', '::', '[::]', 'localhost', '127.0.0.1'):
+  dfs_dn_ipc_address = config['agentLevelParams']['hostname'] + ':' + _dn_ipc_port
 secure_dn_ports_are_in_use = False
 
 hdfs_tmp_dir = default("/configurations/hadoop-env/hdfs_tmp_dir", "/tmp")
