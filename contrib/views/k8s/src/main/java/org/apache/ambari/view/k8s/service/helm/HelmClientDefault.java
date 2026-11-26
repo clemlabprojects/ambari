@@ -352,29 +352,40 @@ public class HelmClientDefault implements HelmClient {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public List<Map<String, Object>> history(String releaseName, String namespace, String kubeconfigContents) {
-        Path kubeconfig = writeKubeconfigToTempFile(kubeconfigContents);
         try {
+            // In the server's own Helm library: no helm binary, and no kubeconfig written to disk for it.
             // Cap at 50 even when retention is configured higher — anything older is
             // archaeological and the picker UI tops out at a few pages anyway.
-            List<String> cmd = List.of(
-                    resolveHelmBinary(), "history", releaseName,
-                    "--namespace", namespace,
-                    "--kubeconfig", kubeconfig.toString(),
-                    "--max", "50",
-                    "-o", "json"
-            );
-            String json = runHelmCli(cmd, /*allowFailure*/ false);
-            if (json == null || json.isBlank()) {
-                return Collections.emptyList();
-            }
-            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, List.class);
+            List<com.marcnuri.helm.ReleaseHistory> revisions = Helm.history(releaseName)
+                    .withNamespace(namespace)
+                    .withKubeConfigContents(KubeconfigGuard.canonical(kubeconfigContents))
+                    .withMax(50)
+                    .call();
+            return historyEntries(revisions);
         } catch (Exception e) {
             throw new RuntimeException("Failed to read helm history for " + namespace + "/" + releaseName + ": " + e.getMessage(), e);
-        } finally {
-            try { Files.deleteIfExists(kubeconfig); } catch (Exception ignored) {}
         }
+    }
+
+    /** The revisions as {@code helm history -o json} names their fields, ordered by revision. */
+    static List<Map<String, Object>> historyEntries(List<com.marcnuri.helm.ReleaseHistory> revisions) {
+        if (revisions == null || revisions.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Map<String, Object>> entries = new java.util.ArrayList<>();
+        for (com.marcnuri.helm.ReleaseHistory revision : revisions) {
+            Map<String, Object> entry = new java.util.LinkedHashMap<>();
+            entry.put("revision", revision.getRevision());
+            entry.put("updated", revision.getUpdated() == null ? null : revision.getUpdated().toOffsetDateTime().toString());
+            entry.put("status", revision.getStatus());
+            entry.put("chart", revision.getChart());
+            entry.put("app_version", revision.getAppVersion());
+            entry.put("description", revision.getDescription());
+            entries.add(entry);
+        }
+        entries.sort(java.util.Comparator.comparingInt(e -> (Integer) e.get("revision")));
+        return entries;
     }
 
     /**
