@@ -7195,6 +7195,20 @@ public class KubernetesService {
     }
 
     /**
+     * The data of a ConfigMap, or an empty map when it does not exist or cannot be read.
+     */
+    public Map<String, String> configMapData(String namespace, String name) {
+        checkConfiguration();
+        try {
+            ConfigMap configMap = client.configMaps().inNamespace(namespace).withName(name).get();
+            return configMap == null || configMap.getData() == null ? Map.of() : configMap.getData();
+        } catch (Exception ex) {
+            LOG.warn("Could not read ConfigMap {}/{}: {}", namespace, name, ex.toString());
+            return Map.of();
+        }
+    }
+
+    /**
      * Create or update a ConfigMap with string data entries.
      * If immutable and content changed, we delete & recreate (mirrors Secret logic).
      */

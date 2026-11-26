@@ -58,6 +58,8 @@ public final class FakeRangerAdmin implements AutoCloseable {
     public volatile boolean userDirectory;
     /** Service repositories by name, with their id. */
     public final Map<String, Long> services = new LinkedHashMap<>();
+    /** The configs of each service repository, by service name, as Ranger stores them (passwords in clear). */
+    public final Map<String, Map<String, String>> serviceConfigs = new LinkedHashMap<>();
     /** "METHOD path" of every request received, oldest first. */
     public final List<String> requests = new ArrayList<>();
     /** When set, listing a service's policies answers HTTP 500, as a Ranger in trouble would. */
@@ -218,10 +220,37 @@ public final class FakeRangerAdmin implements AutoCloseable {
             return;
         }
         if (path.equals("/service/public/v2/api/service") && "POST".equals(method)) {
-            String service = JsonParser.parseString(body).getAsJsonObject().get("name").getAsString();
+            JsonObject created = JsonParser.parseString(body).getAsJsonObject();
+            String service = created.get("name").getAsString();
             long id = nextId++;
             services.put(service, id);
+            serviceConfigs.put(service, configsOf(created, Map.of()));
             answer(ex, 200, "{\"id\":" + id + ",\"name\":\"" + service + "\"}");
+            return;
+        }
+        if (path.matches(java.util.regex.Pattern.quote(servicePrefix) + "\\d+")
+                && ("GET".equals(method) || "PUT".equals(method))) {
+            long id = Long.parseLong(path.substring(servicePrefix.length()));
+            String service = services.entrySet().stream().filter(e -> e.getValue() == id).map(Map.Entry::getKey)
+                    .findFirst().orElse(null);
+            if (service == null) {
+                answer(ex, 404, "{\"msgDesc\":\"no service\"}");
+                return;
+            }
+            Map<String, String> stored = serviceConfigs.computeIfAbsent(service, k -> new LinkedHashMap<>());
+            if ("PUT".equals(method)) {
+                stored = configsOf(JsonParser.parseString(body).getAsJsonObject(), stored);
+                serviceConfigs.put(service, stored);
+            }
+            JsonObject svc = new JsonObject();
+            svc.addProperty("id", id);
+            svc.addProperty("name", service);
+            svc.addProperty("type", "trino");
+            JsonObject cfg = new JsonObject();
+            // Ranger answers a password masked.
+            stored.forEach((k, v) -> cfg.addProperty(k, "password".equals(k) ? "*****" : v));
+            svc.add("configs", cfg);
+            answer(ex, 200, svc.toString());
             return;
         }
         if (path.startsWith(servicePrefix) && "DELETE".equals(method) && !path.contains("/policy")) {
@@ -365,6 +394,18 @@ public final class FakeRangerAdmin implements AutoCloseable {
             sig.put(k, values);
         }
         return sig.toString();
+    }
+
+    /** The configs of a service body; a password sent back masked keeps the one stored, as Ranger does. */
+    private static Map<String, String> configsOf(JsonObject service, Map<String, String> stored) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (service.has("configs") && service.get("configs").isJsonObject()) {
+            for (Map.Entry<String, JsonElement> e : service.getAsJsonObject("configs").entrySet()) {
+                String v = e.getValue().getAsString();
+                out.put(e.getKey(), "password".equals(e.getKey()) && "*****".equals(v) ? stored.get("password") : v);
+            }
+        }
+        return out;
     }
 
     private static void answer(HttpExchange ex, int code, String body) throws IOException {

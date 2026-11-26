@@ -1492,8 +1492,11 @@ public final class OmAtlasProvisioning {
 
                 Long existing = lookupServiceByName(tls, rangerAdminUrl, basic, serviceName);
         if (existing != null) {
-            LOG.info("OmAtlasProvisioning: Ranger service '{}' already exists (id={}) — keeping it, checking its tag service",
+            LOG.info("OmAtlasProvisioning: Ranger service '{}' already exists (id={}) — keeping it, checking its configs and tag service",
                     serviceName, existing);
+            // A service created by an earlier deploy, or by hand, keeps its policies; it gets the configs this deploy
+            // gives a new one (the plugin's download users above all), as a first deploy would have set them.
+            reconcileServiceConfigs(tls, rangerAdminUrl, basic, existing, serviceName, configs);
             relinkTagServiceIfNeeded(tls, rangerAdminUrl, basic, existing, serviceName);
             return existing;
         }
@@ -1539,6 +1542,106 @@ public final class OmAtlasProvisioning {
     }
 
             /**
+     * Gives an existing Ranger service the configs a deploy would create it with: what KDPS derives (the JDBC URL of
+     * the lookups, the users allowed to download policies and tags) replaces what the service holds, users allowed to
+     * download are added to those already listed, and the lookup credentials are only filled in when the service has
+     * none, so credentials an administrator set are kept. Nothing is written when the service already has them all.
+     *
+     * @throws IllegalStateException when Ranger refuses the update: a plugin left without its download users would be
+     *                               refused its policies
+     */
+    static void reconcileServiceConfigs(TlsPolicy tls, String rangerAdminUrl, String basic, long serviceId,
+                                        String serviceName, Map<String, String> wanted) throws Exception {
+        if (wanted == null || wanted.isEmpty()) {
+            return;
+        }
+        String url = rangerAdminUrl + "/service/public/v2/api/service/" + serviceId;
+        HttpURLConnection get = (HttpURLConnection) new URL(url).openConnection();
+        configureSsl(get, tls);
+        get.setRequestMethod("GET");
+        get.setRequestProperty("Authorization", basic);
+        get.setRequestProperty("Accept", "application/json");
+        int getCode = get.getResponseCode();
+        if (getCode != 200) {
+            throw new IllegalStateException("Ranger service '" + serviceName + "' could not be read to update its configs: HTTP "
+                    + getCode + " — " + readBody(get, true));
+        }
+        JsonObject svc = JsonParser.parseString(readBody(get, false)).getAsJsonObject();
+        Map<String, String> current = new java.util.LinkedHashMap<>();
+        if (svc.has("configs") && svc.get("configs").isJsonObject()) {
+            for (Map.Entry<String, com.google.gson.JsonElement> e : svc.getAsJsonObject("configs").entrySet()) {
+                current.put(e.getKey(), e.getValue().isJsonNull() ? null : e.getValue().getAsString());
+            }
+        }
+        Map<String, String> merged = mergeServiceConfigs(current, wanted);
+        if (merged.equals(current)) {
+            LOG.info("OmAtlasProvisioning: Ranger service '{}' already has the configs of this deploy", serviceName);
+            return;
+        }
+        JsonObject cfg = new JsonObject();
+        merged.forEach((k, v) -> { if (k != null && v != null) cfg.addProperty(k, v); });
+        svc.add("configs", cfg);
+        HttpURLConnection put = (HttpURLConnection) new URL(url).openConnection();
+        configureSsl(put, tls);
+        put.setRequestMethod("PUT");
+        put.setRequestProperty("Authorization", basic);
+        put.setRequestProperty("Content-Type", "application/json");
+        put.setDoOutput(true);
+        try (var os = put.getOutputStream()) {
+            os.write(GSON.toJson(svc).getBytes(StandardCharsets.UTF_8));
+        }
+        int code = put.getResponseCode();
+        if (code / 100 != 2) {
+            throw new IllegalStateException("Ranger refused the configs of service '" + serviceName + "': HTTP " + code
+                    + " — " + readBody(put, true));
+        }
+        java.util.Set<String> changed = new java.util.TreeSet<>();
+        merged.forEach((k, v) -> { if (!java.util.Objects.equals(v, current.get(k))) changed.add(k); });
+        LOG.info("OmAtlasProvisioning: updated configs {} of Ranger service '{}'", changed, serviceName);
+    }
+
+    /**
+     * The configs of an existing Ranger service once a deploy's are applied (see {@link #reconcileServiceConfigs}):
+     * {@code *.download.auth.users} lists get the wanted users added, {@code username} and {@code password} are only
+     * set when absent, every other wanted config replaces the service's.
+     */
+    static Map<String, String> mergeServiceConfigs(Map<String, String> current, Map<String, String> wanted) {
+        Map<String, String> merged = new java.util.LinkedHashMap<>(current == null ? Map.of() : current);
+        if (wanted == null) {
+            return merged;
+        }
+        for (Map.Entry<String, String> e : wanted.entrySet()) {
+            String key = e.getKey();
+            String value = e.getValue();
+            if (key == null || value == null) {
+                continue;
+            }
+            String present = merged.get(key);
+            if ("username".equals(key) || "password".equals(key)) {
+                if (present == null || present.isBlank()) merged.put(key, value);
+            } else if (key.endsWith(".download.auth.users")) {
+                // The users already listed are kept as Ranger holds them; the wanted ones missing are appended.
+                java.util.List<String> listed = new java.util.ArrayList<>();
+                if (present != null) {
+                    for (String user : present.split(",")) if (!user.isBlank()) listed.add(user.trim());
+                }
+                java.util.List<String> missing = new java.util.ArrayList<>();
+                for (String user : value.split(",")) {
+                    String u = user.trim();
+                    if (!u.isEmpty() && !listed.contains(u) && !missing.contains(u)) missing.add(u);
+                }
+                if (!missing.isEmpty()) {
+                    listed.addAll(missing);
+                    merged.put(key, String.join(",", listed));
+                }
+            } else {
+                merged.put(key, value);
+            }
+        }
+        return merged;
+    }
+
+    /**
      * An existing repo created before KDPS set tag services sits on Ranger's default {@code tag}
      * service (or none). Move it to the Hive repo's tag service so Hive-side tags apply to it; a repo
      * already on a non-default tag service is left alone. Best effort — never fails the caller.

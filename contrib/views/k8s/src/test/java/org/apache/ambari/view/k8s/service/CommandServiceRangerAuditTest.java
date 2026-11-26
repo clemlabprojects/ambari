@@ -394,6 +394,93 @@ class CommandServiceRangerAuditTest {
         assertTrue(!params.containsKey("_rangerServiceConfigs"), params.toString());
     }
 
+    /** The values a release runs with, Kerberos on or off as its install decided. */
+    private static Map<String, Object> releaseValues(boolean kerberos) {
+        return new LinkedHashMap<>(Map.of("global", Map.of("security", Map.of("kerberos", Map.of("enabled", kerberos)))));
+    }
+
+    /** A release deployed on the CDP context, as "Reapply Ranger repository" finds it. */
+    private CommandService.ReleaseActionTarget cdpRelease() {
+        ResolvedContext resolved = new ResolvedContext();
+        resolved.setId("cdp");
+        resolved.setKind(ContextService.KIND_CDP);
+        resolved.getResolvedFields().put("kerberos.realm", "CDP.EXAMPLE.COM");
+        return new CommandService.ReleaseActionTarget("cdp", ContextService.KIND_CDP, "CDP", resolved, null, null);
+    }
+
+    /** What "Reapply Ranger repository" plans for the release: its parameters, then the plugin objects. */
+    private List<String> reapply(CommandService.ReleaseActionTarget target, Map<String, Object> values,
+                                 Map<String, Object> params) throws Exception {
+        params.put("_platformContextId", target.contextId());
+        List<String> warnings = new ArrayList<>();
+        String kerberosWarning = service.putReleaseRangerKerberos(params, target, values, trinoRangerSpec(), NS, RELEASE);
+        if (kerberosWarning != null) warnings.add(kerberosWarning);
+        warnings.addAll(materialize(values, true, params, null, null));
+        return warnings;
+    }
+
+    @Test
+    void aReapplyLogsThePluginInWithTheKeytabTheContextsKdcIssuedAsTheInstallDid() throws Exception {
+        cdpContextDeployParams();
+        service.contextHoldsKdcAccount = "cdp"::equals;
+        Map<String, Object> params = new LinkedHashMap<>();
+
+        List<String> warnings = reapply(cdpRelease(), releaseValues(true), params);
+
+        assertEquals(true, params.get("kerberosClusterEnabled"));
+        assertPluginLogsInAs("trino-" + NS + "@CDP.EXAMPLE.COM", "/etc/security/keytabs/service.keytab",
+                "trino-" + NS, params);
+        assertTrue(warnings.stream().noneMatch(w -> w.contains("no Kerberos login")), warnings.toString());
+    }
+
+    @Test
+    void aReapplyKeepsThePrincipalOfTheOperatorKeytabThePluginWasGiven() throws Exception {
+        cdpContextDeployParams();
+        doReturn(Map.of("ranger-trino-security.xml", "<configuration><property>"
+                + "<name>ranger.plugin.trino.ugi.keytab.principal</name><value>svc-trino@CDP.EXAMPLE.COM</value>"
+                + "</property></configuration>")).when(k8s).configMapData(NS, SECURITY_MAP);
+        Map<String, Object> params = new LinkedHashMap<>();
+
+        reapply(cdpRelease(), releaseValues(true), params);
+
+        assertPluginLogsInAs("svc-trino@CDP.EXAMPLE.COM", "/etc/security/keytabs/service.keytab", "svc-trino", params);
+    }
+
+    @Test
+    void aReapplyThatCannotFindTheOperatorKeytabsPrincipalSaysSo() throws Exception {
+        cdpContextDeployParams();
+        doReturn(Map.of()).when(k8s).configMapData(any(), any());
+        Map<String, Object> params = new LinkedHashMap<>();
+
+        List<String> warnings = reapply(cdpRelease(), releaseValues(true), params);
+
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("operator keytab") && w.contains("names no principal")),
+                warnings.toString());
+        assertEquals("false", securityProperties().get("ranger.plugin.trino.ugi.initialize"));
+    }
+
+    @Test
+    void aReapplyOfAReleaseWithoutKerberosGivesThePluginNoKerberosLogin() throws Exception {
+        cdpContextDeployParams();
+        Map<String, Object> params = new LinkedHashMap<>();
+
+        reapply(cdpRelease(), releaseValues(false), params);
+
+        assertEquals(false, params.get("kerberosClusterEnabled"));
+        assertEquals("false", securityProperties().get("ranger.plugin.trino.ugi.initialize"));
+        assertTrue(!params.containsKey("_rangerServiceConfigs")
+                || !((Map<?, ?>) params.get("_rangerServiceConfigs")).containsKey("policy.download.auth.users"), params.toString());
+    }
+
+    @Test
+    void theDeployedPluginPrincipalIsReadFromItsSecurityConfiguration() {
+        String xml = "<configuration>\n  <property>\n    <name>ranger.plugin.trino.ugi.keytab.principal</name>\n"
+                + "    <value>trino-ns@EXAMPLE.COM</value>\n  </property>\n</configuration>";
+        assertEquals("trino-ns@EXAMPLE.COM", CommandService.rangerPluginPrincipalOf(xml, "trino"));
+        assertEquals(null, CommandService.rangerPluginPrincipalOf(xml.replace("trino-ns@EXAMPLE.COM", ""), "trino"));
+        assertEquals(null, CommandService.rangerPluginPrincipalOf(xml, "hive"));
+    }
+
     @Test
     void aClusterWithoutKerberosGetsNoSolrLogin() throws Exception {
         clusterAuditingToSolrAndHdfs();

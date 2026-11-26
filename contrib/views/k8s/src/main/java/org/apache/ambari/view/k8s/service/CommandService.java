@@ -247,6 +247,13 @@ public class CommandService {
      */
     static final String KERBEROS_REALM_PARAM = "_kerberosRealm";
 
+    /**
+     * Root parameter holding the principal of an operator keytab the Ranger plugin logs in with, when the request no
+     * longer carries the wizard field naming it: "Reapply Ranger repository" takes it from the plugin configuration the
+     * release was deployed with.
+     */
+    static final String RANGER_PLUGIN_PRINCIPAL_PARAM = "_rangerPluginPrincipal";
+
     /** The payload reference of a keytab a platform context's KDC issued, already stored in its Secret. */
     static final String CONTEXT_KDC_PAYLOAD_PREFIX = "context-kdc:";
 
@@ -3374,6 +3381,9 @@ public class CommandService {
                                 "/etc/security/keytabs/service.keytab"
                         );
                         String rangerPrincipalFull = resolveExternalRangerPrincipal(request);
+                        if (rangerPrincipalFull == null || rangerPrincipalFull.isBlank()) {
+                            rangerPrincipalFull = resolveStringValue(params.get(RANGER_PLUGIN_PRINCIPAL_PARAM), null);
+                        }
                         String missingPrincipalReason = null;
                         if (rangerPrincipalFull != null && !rangerPrincipalFull.isBlank()) {
                             LOG.info("Ranger plugin principal (external keytab) for {} = {}", type, rangerPrincipalFull);
@@ -5478,16 +5488,22 @@ public class CommandService {
         // an external platform would get its repository, and its Atlas tag sync account, on the managed cluster's.
         // Set before the Ranger resources are planned, which read the context's Ranger from it.
         target.putInto(rootParams, baseUri, callerHeaders);
+        // The Kerberos login the install gave the plugin, read before the plugin configuration is written again.
+        String kerberosWarning = putReleaseRangerKerberos(rootParams, target, effectiveValues, serviceDefinition.ranger,
+                namespace, releaseName);
 
         AmbariAliasResolver ambariAliasResolver = new AmbariAliasResolver(ctx);
-        List<String> rangerWarnings = materializeRangerResources(
+        List<String> rangerWarnings = new ArrayList<>(materializeRangerResources(
                 rangerRequest,
                 rootParams,
                 effectiveValues,
                 ambariActionClient,
                 clusterName,
                 ambariAliasResolver
-        );
+        ));
+        if (kerberosWarning != null) {
+            rangerWarnings.add(0, kerberosWarning);
+        }
         rangerWarnings.forEach(w -> appendCommandLog(commandId, "WARNING: " + w));
         // Reapplying runs no Helm upgrade, so a release deployed by an earlier version keeps mounting the
         // configuration shared by the namespace; that one is left alone, since other releases may use it.
@@ -19194,6 +19210,82 @@ public class CommandService {
                 serviceType, configs);
         if (!existed) recordReleaseRangerRepository(stepParams, repositoryName);
         return id;
+    }
+
+    /**
+     * Puts into the parameters of an action that replays the Ranger step of a deployed release what its install decided
+     * for the plugin's Kerberos login, so the replay writes the same plugin configuration and repository download
+     * users: Kerberos on or off, from the values the release runs with; the realm of the keytab KDPS issued in the
+     * platform context's KDC (on the managed cluster the Ranger step reads the cluster's realm itself); for an operator
+     * keytab, the principal the plugin was given, which only its configuration still names.
+     *
+     * @param values the values the release runs with, chart defaults included
+     * @return what the operator must hear, or null
+     */
+    String putReleaseRangerKerberos(Map<String, Object> params, ReleaseActionTarget target, Map<String, Object> values,
+                                    Map<String, Map<String, Object>> rangerSpec, String namespace, String releaseName) {
+        boolean kerberos = "true".equalsIgnoreCase(stringValue(
+                ConfigResolutionService.getByDottedPath(values, KERBEROS_ENABLED_PATH)));
+        params.put("kerberosClusterEnabled", kerberos);
+        if (!kerberos || target.managed()) {
+            return null;
+        }
+        if (keytabsFromContextKdc(target)) {
+            params.put(KERBEROS_REALM_PARAM, stringValue(target.resolved().getResolvedFields().get("kerberos.realm")));
+            return null;
+        }
+        String principal = deployedRangerPluginPrincipal(namespace, releaseName, rangerSpec);
+        if (principal != null) {
+            params.put(RANGER_PLUGIN_PRINCIPAL_PARAM, principal);
+            return null;
+        }
+        return "Release " + releaseName + " logs in to Kerberos with an operator keytab, and the Ranger plugin"
+                + " configuration it was deployed with names no principal: its plugin gets no Kerberos login. Deploy the"
+                + " release again from the wizard, which gives the keytab's principal.";
+    }
+
+    /**
+     * The principal the Ranger plugin of a deployed release logs in as, from the plugin configuration it mounts: its own
+     * ConfigMap, or the one an earlier version shared between the releases of the namespace.
+     *
+     * @return the principal, or null when the configuration names none
+     */
+    String deployedRangerPluginPrincipal(String namespace, String releaseName, Map<String, Map<String, Object>> rangerSpec) {
+        if (rangerSpec == null) {
+            return null;
+        }
+        Map<String, Object> settings = rangerSpec.get("ranger-plugin-settings");
+        String serviceType = settings == null ? null : resolveStringValue(settings.get("service_type"), null);
+        for (Map<String, Object> spec : rangerSpec.values()) {
+            if (spec == null || !"ranger-security".equals(spec.get("type")) || serviceType == null) {
+                continue;
+            }
+            String template = resolveStringValue(spec.get("cm_name"), null);
+            String dataKey = rangerObjectName(template, null, null) + ".xml";
+            for (String name : new LinkedHashSet<>(List.of(rangerObjectName(template, releaseName, namespace),
+                    rangerObjectName(template, null, null)))) {
+                String principal = rangerPluginPrincipalOf(
+                        kubernetesService.configMapData(namespace, name).get(dataKey), serviceType);
+                if (principal != null) {
+                    return principal;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The {@code ranger.plugin.<type>.ugi.keytab.principal} of a plugin's security XML, or null when it is unset. */
+    static String rangerPluginPrincipalOf(String securityXml, String serviceType) {
+        if (securityXml == null || serviceType == null) {
+            return null;
+        }
+        Matcher m = Pattern.compile("<name>\\s*" + Pattern.quote("ranger.plugin." + serviceType + ".ugi.keytab.principal")
+                + "\\s*</name>\\s*<value>([^<]*)</value>").matcher(securityXml);
+        if (!m.find()) {
+            return null;
+        }
+        String principal = m.group(1).trim();
+        return principal.isEmpty() ? null : principal;
     }
 
     /** Whether {@code repositoryName} is the name KDPS gives the Ranger repository of the step's release. */
