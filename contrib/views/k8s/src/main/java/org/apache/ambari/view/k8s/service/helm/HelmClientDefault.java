@@ -46,15 +46,30 @@ public class HelmClientDefault implements HelmClient {
 
     @Override
     public void ensureHttpRepo(Path repositoriesConfig, String name, URI url, String username, String passwordOrToken) {
-        Helm.repo().add()
-            .withRepositoryConfig(repositoriesConfig)
-            .withName(name)
-            .withUrl(url)
-            .call();
+        repoAdd(repositoriesConfig, name, url, username, passwordOrToken).call();
 
         Helm.repo().update()
             .withRepositoryConfig(repositoriesConfig)
             .call();
+    }
+
+    /**
+     * The {@code helm repo add} of an HTTP chart repository, with its login when it has one: without it Helm reads a
+     * password-protected repository anonymously and its index is refused (401).
+     */
+    static com.marcnuri.helm.RepoCommand.RepoSubcommand<Void> repoAdd(Path repositoriesConfig, String name, URI url,
+                                                                    String username, String passwordOrToken) {
+        com.marcnuri.helm.RepoCommand.RepoSubcommand<Void> add = Helm.repo().add()
+            .withRepositoryConfig(repositoriesConfig)
+            .withName(name)
+            .withUrl(url);
+        if (username != null && !username.isBlank()) {
+            add = add.withUsername(username.trim());
+        }
+        if (passwordOrToken != null && !passwordOrToken.isEmpty()) {
+            add = add.withPassword(passwordOrToken);
+        }
+        return add;
     }
 
     @Override
