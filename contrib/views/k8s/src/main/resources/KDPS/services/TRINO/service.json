@@ -36,6 +36,12 @@
   "ranger": {
     "ranger-plugin-settings": {
       "type": "ranger-plugin-settings",
+      "serviceAdmins": {
+        "usersField": "ranger.adminUsers",
+        "groupsField": "ranger.adminGroups",
+        "users": ["system"],
+        "pluginPrincipal": true
+      },
       "repository_name_property": "ranger.serviceName",
       "service_type": "trino",
       "extraConfigs": [
@@ -2801,6 +2807,26 @@
           "defaultValue": true,
           "condition": { "field": "accessControl.type", "value": "ranger" },
           "help": "Also write the audit events to the Trino pod log."
+        },
+        {
+          "name": "ranger.adminUsers",
+          "label": "Ranger admin users",
+          "type": "string",
+          "defaultValue": "",
+          "placeholder": "alice,bob",
+          "excludeFromValues": true,
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Users with every right on this Trino, comma separated.", "helpMore": "KDPS adds them, with delegated administration, to each policy of the Trino service in Ranger that covers every resource of a kind ('all - catalog', 'all - queryid'...), as Ranger does for its lookup user. It does the same for the user 'system', which the query editor at /query/ runs queries as, and for Trino's own principal. A name removed from this list loses those rights at the next deploy, unless it held them before KDPS added it."
+        },
+        {
+          "name": "ranger.adminGroups",
+          "label": "Ranger admin groups",
+          "type": "string",
+          "defaultValue": "",
+          "placeholder": "trino-admins",
+          "excludeFromValues": true,
+          "condition": { "field": "accessControl.type", "value": "ranger" },
+          "help": "Groups with every right on this Trino, comma separated.", "helpMore": "Their members get what 'Ranger admin users' get. The groups are created in Ranger when it does not have them."
         },
         {
           "name": "nodePort.port",

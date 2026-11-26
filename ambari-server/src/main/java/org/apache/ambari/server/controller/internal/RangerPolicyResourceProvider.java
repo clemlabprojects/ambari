@@ -74,6 +74,10 @@ import com.google.inject.Inject;
  * granting it (see {@link EnsureRangerPolicyServerAction}); {@code ownedPolicyOnly} limits that revoke to the
  * policy named {@code policyNameHint}.
  *
+ * <p>With {@code serviceAdmins} set to {@code true} the request makes {@code userNames} and {@code groups}
+ * (comma-separated) the administrators of the service and takes that status back from {@code revokeUserNames} and
+ * {@code revokeGroups}; it needs no access type, resources or policy name.
+ *
  * <p>Because the grant is made with those administrator credentials, only cluster administrators
  * of the cluster named in the request may ask for it.
  *
@@ -121,6 +125,14 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
     private static final String PROPERTY_REVOKE_NS             = "RangerPolicy/revoke";
     private static final String PROPERTY_OWNED_POLICY_ONLY     = "ownedPolicyOnly";
     private static final String PROPERTY_OWNED_POLICY_ONLY_NS  = "RangerPolicy/ownedPolicyOnly";
+    private static final String PROPERTY_SERVICE_ADMINS        = "serviceAdmins";
+    private static final String PROPERTY_SERVICE_ADMINS_NS     = "RangerPolicy/serviceAdmins";
+    private static final String PROPERTY_USER_NAMES            = "userNames";
+    private static final String PROPERTY_USER_NAMES_NS         = "RangerPolicy/userNames";
+    private static final String PROPERTY_REVOKE_USER_NAMES     = "revokeUserNames";
+    private static final String PROPERTY_REVOKE_USER_NAMES_NS  = "RangerPolicy/revokeUserNames";
+    private static final String PROPERTY_REVOKE_GROUPS         = "revokeGroups";
+    private static final String PROPERTY_REVOKE_GROUPS_NS      = "RangerPolicy/revokeGroups";
 
     private static final String PROPERTY_CONTEXT               = "context";
     private static final String PROPERTY_CONTEXT_NS            = "RequestInfo/context";
@@ -147,7 +159,11 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 PROPERTY_ROW_FILTER, PROPERTY_ROW_FILTER_NS,
                 PROPERTY_GROUPS, PROPERTY_GROUPS_NS,
                 PROPERTY_REVOKE, PROPERTY_REVOKE_NS,
-                PROPERTY_OWNED_POLICY_ONLY, PROPERTY_OWNED_POLICY_ONLY_NS
+                PROPERTY_OWNED_POLICY_ONLY, PROPERTY_OWNED_POLICY_ONLY_NS,
+                PROPERTY_SERVICE_ADMINS, PROPERTY_SERVICE_ADMINS_NS,
+                PROPERTY_USER_NAMES, PROPERTY_USER_NAMES_NS,
+                PROPERTY_REVOKE_USER_NAMES, PROPERTY_REVOKE_USER_NAMES_NS,
+                PROPERTY_REVOKE_GROUPS, PROPERTY_REVOKE_GROUPS_NS
         );
         PROPERTY_IDS = Collections.unmodifiableSet(propertyIds);
 
@@ -271,6 +287,18 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             boolean ownedPolicyOnly  = Boolean.parseBoolean(firstNonBlank(
                     stringValue(properties.get(PROPERTY_OWNED_POLICY_ONLY)),
                     stringValue(properties.get(PROPERTY_OWNED_POLICY_ONLY_NS))));
+            boolean serviceAdmins    = Boolean.parseBoolean(firstNonBlank(
+                    stringValue(properties.get(PROPERTY_SERVICE_ADMINS)),
+                    stringValue(properties.get(PROPERTY_SERVICE_ADMINS_NS))));
+            String userNames         = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_USER_NAMES)),
+                    stringValue(properties.get(PROPERTY_USER_NAMES_NS)));
+            String revokeUserNames   = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_REVOKE_USER_NAMES)),
+                    stringValue(properties.get(PROPERTY_REVOKE_USER_NAMES_NS)));
+            String revokeGroups      = firstNonBlank(
+                    stringValue(properties.get(PROPERTY_REVOKE_GROUPS)),
+                    stringValue(properties.get(PROPERTY_REVOKE_GROUPS_NS)));
             if (StringUtils.isBlank(accessTypes) && policyType != 0) {
                 accessTypes = "select";
             }
@@ -281,7 +309,15 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             if (StringUtils.isBlank(rangerServiceName)) {
                 throw new SystemException("rangerServiceName is required");
             }
-            if (StringUtils.isBlank(userName) && StringUtils.isBlank(groups)) {
+            if (serviceAdmins) {
+                if (revoke || policyType != 0) {
+                    throw new SystemException("serviceAdmins cannot be combined with revoke or a policyType");
+                }
+                if (StringUtils.isBlank(userNames) && StringUtils.isBlank(groups)
+                        && StringUtils.isBlank(revokeUserNames) && StringUtils.isBlank(revokeGroups)) {
+                    throw new SystemException("serviceAdmins needs userNames, groups, revokeUserNames or revokeGroups");
+                }
+            } else if (StringUtils.isBlank(userName) && StringUtils.isBlank(groups)) {
                 throw new SystemException("userName or groups is required");
             }
             if (policyType < 0 || policyType > 2) {
@@ -299,13 +335,13 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
             if (ownedPolicyOnly && !revoke) {
                 throw new SystemException("ownedPolicyOnly applies to a revoke only");
             }
-            if (StringUtils.isBlank(accessTypes)) {
+            if (!serviceAdmins && StringUtils.isBlank(accessTypes)) {
                 throw new SystemException("accessTypes is required");
             }
-            if (StringUtils.isBlank(resourcesJson)) {
+            if (!serviceAdmins && StringUtils.isBlank(resourcesJson)) {
                 throw new SystemException("resourcesJson is required");
             }
-            if (StringUtils.isBlank(policyNameHint)) {
+            if (!serviceAdmins && StringUtils.isBlank(policyNameHint)) {
                 throw new SystemException("policyNameHint is required");
             }
 
@@ -320,7 +356,13 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 if (StringUtils.isNotBlank(userName)) {
                     commandParameters.put("userName", userName);
                 }
-                commandParameters.put("accessTypes", accessTypes);
+                if (serviceAdmins) {
+                    commandParameters.put("serviceAdmins", "true");
+                    putIfNotBlank(commandParameters, "userNames", userNames);
+                    putIfNotBlank(commandParameters, "revokeUserNames", revokeUserNames);
+                    putIfNotBlank(commandParameters, "revokeGroups", revokeGroups);
+                }
+                putIfNotBlank(commandParameters, "accessTypes", accessTypes);
                 commandParameters.put("policyType", String.valueOf(policyType));
                 if (StringUtils.isNotBlank(maskType)) {
                     commandParameters.put("maskType", maskType);
@@ -343,8 +385,8 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                 if (ownedPolicyOnly) {
                     commandParameters.put("ownedPolicyOnly", "true");
                 }
-                commandParameters.put("resourcesJson", resourcesJson);
-                commandParameters.put("policyNameHint", policyNameHint);
+                putIfNotBlank(commandParameters, "resourcesJson", resourcesJson);
+                putIfNotBlank(commandParameters, "policyNameHint", policyNameHint);
                 if (StringUtils.isNotBlank(policyDescription)) {
                     commandParameters.put("policyDescription", policyDescription);
                 }
@@ -372,7 +414,8 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
                         cluster.getClusterName(),
                         new ServiceComponentHostServerActionEvent(null, System.currentTimeMillis()),
                         commandParameters,
-                        revoke ? "Revoke Ranger access" : "Ensure Ranger policy",
+                        serviceAdmins ? "Ensure Ranger service administrators"
+                                : revoke ? "Revoke Ranger access" : "Ensure Ranger policy",
                         managementController.findConfigurationTagsWithOverrides(cluster, null, null),
                         timeoutSeconds,
                         false,
@@ -433,6 +476,12 @@ public class RangerPolicyResourceProvider extends AbstractControllerResourceProv
 
     private static String stringValue(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private static void putIfNotBlank(Map<String, String> parameters, String name, String value) {
+        if (StringUtils.isNotBlank(value)) {
+            parameters.put(name, value);
+        }
     }
 
     private static String firstNonBlank(String... values) {

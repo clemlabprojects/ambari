@@ -20,6 +20,7 @@ package org.apache.ambari.view.k8s.service;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.apache.ambari.view.k8s.model.CommandState;
 import org.apache.ambari.view.k8s.model.CommandType;
 import org.apache.ambari.view.k8s.model.ContextRequest;
@@ -121,8 +122,13 @@ class CommandServiceTrinoRangerRepositoryStepTest {
      * id. A null {@code platformContextId} selects the managed context, served through Ambari.
      */
     private String repositoryStep(String platformContextId) {
+        return repositoryStep(platformContextId, Map.of());
+    }
+
+    /** {@link #repositoryStep(String)} with more step parameters. */
+    private String repositoryStep(String platformContextId, Map<String, Object> extra) {
         String id = "deploy-" + Long.toHexString(System.nanoTime());
-        Map<String, Object> params = new LinkedHashMap<>();
+        Map<String, Object> params = new LinkedHashMap<>(extra);
         params.put("chart", "trino");
         params.put("releaseName", "analytics");
         params.put("namespace", "analytics");
@@ -141,6 +147,162 @@ class CommandServiceTrinoRangerRepositoryStepTest {
         view.dataStore.store(status(id + "-step", CommandState.PENDING));
         service.runNextStep(id);
         return id + "-step";
+    }
+
+    /**
+     * The step parameters of a Kerberized Trino deploy whose wizard named {@code users} and {@code groups} as the
+     * administrators of its Ranger service.
+     */
+    private static Map<String, Object> withAdmins(List<String> users, List<String> groups) {
+        Map<String, Object> admins = new LinkedHashMap<>();
+        admins.put("users", users);
+        admins.put("groups", groups);
+        admins.put("fixedUsers", List.of("system"));
+        admins.put("pluginPrincipal", true);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put(CommandService.RANGER_SERVICE_ADMINS_PARAM, admins);
+        params.put("_rangerServiceConfigs", Map.of("policy.download.auth.users", "trino-analytics"));
+        return params;
+    }
+
+    /** The service-wide policies Ranger creates with a Trino service, its lookup user an administrator of each. */
+    private long[] serviceWidePolicies() {
+        ranger.services.put(REPO, 3L);
+        return new long[]{
+                ranger.add(REPO, "all - catalog, schema, table",
+                        Map.of("catalog", List.of("*"), "schema", List.of("*"), "table", List.of("*")),
+                        lookupAdmin("select", "show")),
+                ranger.add(REPO, "all - queryid", Map.of("queryid", List.of("*")), lookupAdmin("execute"))};
+    }
+
+    private static String lookupAdmin(String... accesses) {
+        JsonObject item = JsonParser.parseString(item(List.of("rangerlookup"), accesses)).getAsJsonObject();
+        item.addProperty("delegateAdmin", true);
+        return item.toString();
+    }
+
+    /** The users and groups of every item of the policy that has delegated administration. */
+    private List<String> adminsOf(long policyId) {
+        List<String> out = new java.util.ArrayList<>();
+        ranger.policies.get(policyId).getAsJsonArray("policyItems").forEach(e -> {
+            JsonObject item = e.getAsJsonObject();
+            if (item.has("delegateAdmin") && item.get("delegateAdmin").getAsBoolean()) {
+                item.getAsJsonArray("users").forEach(u -> out.add(u.getAsString()));
+                item.getAsJsonArray("groups").forEach(g -> out.add("group:" + g.getAsString()));
+            }
+        });
+        return out;
+    }
+
+    @Test
+    void theNamedUsersSystemAndTrinosPrincipalAdministerEveryServiceWidePolicy() {
+        long[] policies = serviceWidePolicies();
+        ranger.userDirectory = true;
+
+        String step = repositoryStep("ext", withAdmins(List.of("alice"), List.of("trino-admins")));
+
+        assertEquals(CommandState.SUCCEEDED.name(), statusOf(step).getState(), statusOf(step).getMessage());
+        for (long id : policies) {
+            assertEquals(List.of("rangerlookup", "alice", "system", "trino-analytics", "group:trino-admins"),
+                    adminsOf(id));
+        }
+        assertTrue(ranger.users.containsKey("system") && ranger.groups.containsKey("trino-admins"),
+                "Ranger has the user 'system' and the group: " + ranger.users.keySet() + " " + ranger.groups.keySet());
+    }
+
+    @Test
+    void aNameTheNextDeployNoLongerGivesLosesWhatKdpsGaveIt() {
+        long[] policies = serviceWidePolicies();
+        repositoryStep("ext", withAdmins(List.of("alice"), List.of("trino-admins")));
+
+        String step = repositoryStep("ext", withAdmins(List.of(), List.of()));
+
+        assertEquals(CommandState.SUCCEEDED.name(), statusOf(step).getState(), statusOf(step).getMessage());
+        for (long id : policies) {
+            assertEquals(List.of("rangerlookup", "system", "trino-analytics"), adminsOf(id));
+        }
+    }
+
+    @Test
+    void anAdministratorKdpsDidNotAddIsNeverTakenBack() {
+        long[] policies = serviceWidePolicies();
+        repositoryStep("ext", withAdmins(List.of("rangerlookup"), List.of()));
+
+        repositoryStep("ext", withAdmins(List.of(), List.of()));
+
+        assertTrue(adminsOf(policies[0]).contains("rangerlookup"), adminsOf(policies[0]).toString());
+    }
+
+    @Test
+    void anActionReplayingTheDeployNamesTheAdministratorsTheDeployRecorded() {
+        serviceWidePolicies();
+        repositoryStep("ext", withAdmins(List.of("alice"), List.of("trino-admins")));
+        org.apache.ambari.view.k8s.requests.HelmDeployRequest replay = new org.apache.ambari.view.k8s.requests.HelmDeployRequest();
+        replay.setNamespace("analytics");
+        replay.setReleaseName("analytics");
+        replay.setFormValues(Map.of("platformContextId", "ext"));
+        Map<String, Object> settings = Map.of("serviceAdmins", Map.of("usersField", "ranger.adminUsers",
+                "groupsField", "ranger.adminGroups", "users", List.of("system"), "pluginPrincipal", true));
+
+        Map<String, Object> admins = service.rangerServiceAdminsOf(settings, replay);
+
+        assertEquals(List.of("alice"), admins.get("users"));
+        assertEquals(List.of("trino-admins"), admins.get("groups"));
+        assertEquals(List.of("system"), admins.get("fixedUsers"));
+    }
+
+    @Test
+    void theWizardsAnswersWinOverWhatAnEarlierDeployRecorded() {
+        org.apache.ambari.view.k8s.requests.HelmDeployRequest deploy = new org.apache.ambari.view.k8s.requests.HelmDeployRequest();
+        deploy.setNamespace("analytics");
+        deploy.setReleaseName("analytics");
+        deploy.setFormValues(Map.of("ranger", Map.of("adminUsers", " bob, ,carol,bob", "adminGroups", "")));
+        Map<String, Object> settings = Map.of("serviceAdmins", Map.of("usersField", "ranger.adminUsers",
+                "groupsField", "ranger.adminGroups"));
+
+        Map<String, Object> admins = service.rangerServiceAdminsOf(settings, deploy);
+
+        assertEquals(List.of("bob", "carol"), admins.get("users"));
+        assertEquals(List.of(), admins.get("groups"));
+    }
+
+    @Test
+    void onTheManagedClusterTheAmbariServerIsAskedForTheSameAdministrators() throws Exception {
+        org.apache.ambari.view.k8s.utils.AmbariActionClient ambari =
+                org.mockito.Mockito.mock(org.apache.ambari.view.k8s.utils.AmbariActionClient.class);
+        org.mockito.Mockito.when(ambari.submitRangerServiceAdmins(org.mockito.ArgumentMatchers.eq(REPO),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(7, 8);
+        org.mockito.Mockito.when(ambari.waitUntilComplete(org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any())).thenReturn(true);
+        org.mockito.Mockito.when(ambari.taskStructuredOut(7)).thenReturn(java.util.Optional.of(JsonParser.parseString(
+                "{\"addedUsers\":[\"alice\",\"system\",\"trino-analytics\"],\"addedGroups\":[],\"serviceWidePolicies\":4}")
+                .getAsJsonObject()));
+        org.mockito.Mockito.when(ambari.taskStructuredOut(8)).thenReturn(java.util.Optional.of(JsonParser.parseString(
+                "{\"addedUsers\":[],\"addedGroups\":[],\"serviceWidePolicies\":4}").getAsJsonObject()));
+        Map<String, Object> first = stepParams(withAdmins(List.of("alice"), List.of()));
+        Map<String, Object> second = stepParams(withAdmins(List.of(), List.of()));
+
+        assertEquals(List.of(), service.applyRangerServiceAdmins(first, REPO, null, ambari, 30));
+        assertEquals(List.of(), service.applyRangerServiceAdmins(second, REPO, null, ambari, 30));
+
+        org.mockito.Mockito.verify(ambari).submitRangerServiceAdmins(REPO,
+                new java.util.LinkedHashSet<>(List.of("alice", "system", "trino-analytics")),
+                new java.util.LinkedHashSet<>(), new java.util.LinkedHashSet<>(), new java.util.LinkedHashSet<>(), 30,
+                "KDPS: administrators of Ranger service " + REPO);
+        org.mockito.Mockito.verify(ambari).submitRangerServiceAdmins(REPO,
+                new java.util.LinkedHashSet<>(List.of("system", "trino-analytics")),
+                new java.util.LinkedHashSet<>(), new java.util.LinkedHashSet<>(List.of("alice")),
+                new java.util.LinkedHashSet<>(), 30, "KDPS: administrators of Ranger service " + REPO);
+    }
+
+    /** The parameters of a repository step of release analytics on the managed cluster. */
+    private static Map<String, Object> stepParams(Map<String, Object> extra) {
+        Map<String, Object> params = new LinkedHashMap<>(extra);
+        params.put("releaseName", "analytics");
+        params.put("namespace", "analytics");
+        return params;
     }
 
     @Test

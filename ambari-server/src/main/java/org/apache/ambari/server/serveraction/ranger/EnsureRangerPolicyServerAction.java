@@ -98,6 +98,11 @@ import com.google.inject.Inject;
  * that a later grant under that name starts from the resources it asks for rather than appending to
  * the old, wider ones. No user or group is created in this mode.
  *
+ * <p>With {@code serviceAdmins=true} the action makes {@code userNames} and {@code groups} (comma-separated) the
+ * administrators of the service ({@link RangerServiceAdmins}) and takes that status back from {@code revokeUserNames}
+ * and {@code revokeGroups}; only {@code clusterName} and {@code rangerServiceName} are required then. Its structured
+ * output lists the users and groups it added ({@code addedUsers}, {@code addedGroups}).
+ *
  * <p>With {@code ownedPolicyOnly} the revoke leaves every other policy alone. It is for an account that
  * also holds access of its own over the same resources, such as a service user listed in the
  * repository's default policies: whether a grant there came from the caller cannot be told, so it
@@ -154,6 +159,13 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
         }
         boolean revoke = Boolean.parseBoolean(trimToNull(commandParameters.get("revoke")));
         boolean ownedPolicyOnly = Boolean.parseBoolean(trimToNull(commandParameters.get("ownedPolicyOnly")));
+        boolean serviceAdmins = Boolean.parseBoolean(trimToNull(commandParameters.get("serviceAdmins")));
+        if (serviceAdmins) {
+            String missingParameter = firstMissing("clusterName", clusterName, "rangerServiceName", rangerServiceName);
+            if (missingParameter != null) {
+                return fail("Required parameter '" + missingParameter + "' is missing or empty");
+            }
+        }
 
         LOG.info("EnsureRangerPolicyServerAction called: clusterName='{}', rangerServiceName='{}', "
                         + "userName='{}', accessTypes='{}', policyNameHint='{}'",
@@ -171,13 +183,13 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
                 + (spec.groups.isEmpty() ? "" : " groups=" + spec.groups));
         actionLog.writeStdOut("  revoke            = " + revoke + (ownedPolicyOnly ? " (owned policy only)" : ""));
 
-        String missing = firstMissing(
+        String missing = serviceAdmins ? null : firstMissing(
                 "clusterName", clusterName,
                 "rangerServiceName", rangerServiceName,
                 "accessTypes", accessTypes,
                 "resourcesJson", resourcesJson,
                 "policyNameHint", policyNameHint);
-        if (missing == null && userName == null && spec.groups.isEmpty()) {
+        if (!serviceAdmins && missing == null && userName == null && spec.groups.isEmpty()) {
             missing = "userName (or groups)";
         }
         if (missing == null && spec.policyType == 1 && spec.maskType == null) {
@@ -237,6 +249,13 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
             actionLog.writeStdOut("Using Ranger at " + policymgrExternalUrl
                     + " with admin user " + rangerAdminUserName);
 
+            if (serviceAdmins) {
+                return ensureServiceAdmins(policymgrExternalUrl, auth, clusterName, rangerServiceName,
+                        splitCsv(trimToNull(commandParameters.get("userNames"))), spec.groups,
+                        splitCsv(trimToNull(commandParameters.get("revokeUserNames"))),
+                        splitCsv(trimToNull(commandParameters.get("revokeGroups"))));
+            }
+
             if (revoke) {
                 int changed = revokeGrant(policymgrExternalUrl, auth, rangerServiceName, userName, spec.groups,
                         accessTypes, resourcesJson, policyNameHint, ownedPolicyOnly);
@@ -286,6 +305,77 @@ public class EnsureRangerPolicyServerAction extends AbstractServerAction {
             actionLog.writeStdErr(error);
             return createCommandReport(0, HostRoleStatus.FAILED, "{}", actionLog.getStdOut(), actionLog.getStdErr());
         }
+    }
+
+    /**
+     * The {@code serviceAdmins} mode (see {@link RangerServiceAdmins}): takes the revoked users and groups out of the
+     * service's service-wide policies, then gives the wanted ones, created in Ranger when missing, every access of
+     * those policies with delegated administration. Users and groups that already hold it are left as they are.
+     * Idempotent: a policy is written only when it changes. The structured output says who was added, so the caller
+     * can take back later only what this action gave.
+     */
+    private CommandReport ensureServiceAdmins(String baseUrl, String auth, String clusterName, String serviceName,
+                                              List<String> userNames, List<String> groups,
+                                              List<String> revokeUserNames, List<String> revokeGroups) throws Exception {
+        actionLog.writeStdOut("  service admins    = users " + userNames + ", groups " + groups
+                + "; revoked users " + revokeUserNames + ", groups " + revokeGroups);
+        Set<String> users = new LinkedHashSet<>(userNames);
+        Set<String> groupSet = new LinkedHashSet<>(groups);
+        Set<String> revokedUsers = new LinkedHashSet<>(revokeUserNames);
+        revokedUsers.removeAll(users);
+        Set<String> revokedGroups = new LinkedHashSet<>(revokeGroups);
+        revokedGroups.removeAll(groupSet);
+        for (String user : users) {
+            ensureUserExists(baseUrl, auth, user);
+        }
+        for (String group : groupSet) {
+            ensureGroupExists(baseUrl, auth, group);
+        }
+        RangerServiceAdmins.Principals added = new RangerServiceAdmins.Principals();
+        int serviceWide = 0;
+        int changed = 0;
+        for (JsonObject policy : listPolicies(baseUrl, auth, serviceName)) {
+            if (!RangerServiceAdmins.isServiceWide(policy)) {
+                continue;
+            }
+            serviceWide++;
+            boolean revokedHere = RangerServiceAdmins.revoke(policy, revokedUsers, revokedGroups);
+            RangerServiceAdmins.Principals addedHere = RangerServiceAdmins.grant(policy, users, groupSet);
+            if (!revokedHere && addedHere.isEmpty()) {
+                continue;
+            }
+            long policyId = policy.get("id").getAsLong();
+            String policyName = policy.has("name") ? policy.get("name").getAsString() : String.valueOf(policyId);
+            HttpResponse put = http(baseUrl + "/service/public/v2/api/policy/" + policyId, "PUT", auth, policy.toString());
+            if (put.statusCode / 100 != 2) {
+                throw new IllegalStateException("Ranger policy update (id=" + policyId + ") failed: HTTP "
+                        + put.statusCode + " — " + put.body);
+            }
+            actionLog.writeStdOut("Ranger policy '" + policyName + "': added users " + addedHere.users + ", groups "
+                    + addedHere.groups + (revokedHere ? "; removed users " + revokedUsers + ", groups " + revokedGroups : ""));
+            added.addAll(addedHere);
+            changed++;
+        }
+        if (serviceWide == 0) {
+            actionLog.writeStdOut("Ranger service '" + serviceName + "' has no service-wide policy: nobody was made an admin");
+        }
+        JsonObject out = new JsonObject();
+        out.addProperty("clusterName", clusterName);
+        out.addProperty("rangerServiceName", serviceName);
+        JsonArray addedUsers = new JsonArray();
+        added.users.forEach(addedUsers::add);
+        JsonArray addedGroups = new JsonArray();
+        added.groups.forEach(addedGroups::add);
+        out.add("addedUsers", addedUsers);
+        out.add("addedGroups", addedGroups);
+        out.addProperty("serviceWidePolicies", serviceWide);
+        out.addProperty("changedPolicies", changed);
+        String done = "Ranger service '" + serviceName + "': " + changed + " of " + serviceWide
+                + " service-wide policies changed";
+        actionLog.writeStdOut(done);
+        LOG.info(done);
+        return createCommandReport(0, HostRoleStatus.COMPLETED, out.toString(), actionLog.getStdOut(),
+                actionLog.getStdErr());
     }
 
     private CommandReport fail(String message) {

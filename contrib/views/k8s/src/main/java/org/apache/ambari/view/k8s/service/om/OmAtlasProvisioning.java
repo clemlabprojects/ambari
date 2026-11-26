@@ -622,6 +622,13 @@ public final class OmAtlasProvisioning {
      */
     private static void ensureRangerUserExists(TlsPolicy tls, String rangerAdminUrl, String basic,
                                                 String userName) throws Exception {
+        ensureRangerUserExists(tls, rangerAdminUrl, basic, userName,
+                "Provisioned by Ambari KDPS for OpenMetadata Atlas federation");
+    }
+
+    /** {@link #ensureRangerUserExists(TlsPolicy, String, String, String)} with the description a new user gets. */
+    private static void ensureRangerUserExists(TlsPolicy tls, String rangerAdminUrl, String basic,
+                                                String userName, String description) throws Exception {
         // Ranger macros ({USER}, {OWNER}) are resolved by Ranger at evaluation time; there is no
         // account to create for them.
         if (userName == null || userName.startsWith("{")) return;
@@ -658,7 +665,7 @@ public final class OmAtlasProvisioning {
         xuser.addProperty("firstName", userName);
         xuser.addProperty("lastName", "(KDPS)");
         xuser.addProperty("emailAddress", "");
-        xuser.addProperty("description", "Provisioned by Ambari KDPS for OpenMetadata Atlas federation");
+        xuser.addProperty("description", description);
         xuser.addProperty("status", 1);
         xuser.addProperty("isVisible", 1);
         xuser.addProperty("userSource", 0);
@@ -1246,6 +1253,64 @@ public final class OmAtlasProvisioning {
             }
         }
         return out;
+    }
+
+    /**
+     * What making a service's administrators did: who was added (only those, so that a later deploy takes back only
+     * what KDPS gave), and how many service-wide policies the service has.
+     */
+    public record ServiceAdminsResult(RangerServiceAdmins.Principals added, int serviceWidePolicies) {}
+
+    /**
+     * Makes {@code users} and {@code groups} the administrators of a Ranger service ({@link RangerServiceAdmins}),
+     * creating them in Ranger when missing, and takes that status back from {@code revokedUsers} and
+     * {@code revokedGroups} (a name still wanted is kept). A policy is written only when it changes. Same rules as the
+     * Ambari server's {@code serviceAdmins} action for the managed cluster.
+     */
+    public static ServiceAdminsResult ensureServiceAdmins(TlsPolicy tls, String rangerAdminUrl, String rangerUser,
+                                                          String rangerPassword, String serviceName,
+                                                          Set<String> users, Set<String> groups,
+                                                          Set<String> revokedUsers, Set<String> revokedGroups)
+            throws Exception {
+        String basic = "Basic " + Base64.getEncoder().encodeToString(
+                (rangerUser + ":" + rangerPassword).getBytes(StandardCharsets.UTF_8));
+        Set<String> revokeUsers = new java.util.LinkedHashSet<>(revokedUsers);
+        revokeUsers.removeAll(users);
+        Set<String> revokeGroups = new java.util.LinkedHashSet<>(revokedGroups);
+        revokeGroups.removeAll(groups);
+        for (String user : users) {
+            ensureRangerUserExists(tls, rangerAdminUrl, basic, user,
+                    "Provisioned by Ambari KDPS: an administrator of Ranger service " + serviceName);
+        }
+        for (String group : groups) {
+            ensureRangerGroupExists(tls, rangerAdminUrl, basic, group);
+        }
+        RangerServiceAdmins.Principals added = new RangerServiceAdmins.Principals();
+        int serviceWide = 0;
+        for (JsonObject policy : listServicePolicies(tls, rangerAdminUrl, basic, serviceName)) {
+            if (!RangerServiceAdmins.isServiceWide(policy)) {
+                continue;
+            }
+            serviceWide++;
+            boolean revokedHere = RangerServiceAdmins.revoke(policy, revokeUsers, revokeGroups);
+            RangerServiceAdmins.Principals addedHere = RangerServiceAdmins.grant(policy, users, groups);
+            if (!revokedHere && addedHere.isEmpty()) {
+                continue;
+            }
+            long policyId = policy.get("id").getAsLong();
+            RangerAnswer put = rangerCall(tls, "PUT", rangerAdminUrl + "/service/public/v2/api/policy/" + policyId,
+                    basic, policy);
+            if (put.code() / 100 != 2) {
+                throw new IllegalStateException("Ranger refused the administrators of policy '"
+                        + (policy.has("name") ? policy.get("name").getAsString() : policyId) + "' of service '"
+                        + serviceName + "': HTTP " + put.code() + " — " + put.body());
+            }
+            LOG.info("OmAtlasProvisioning: Ranger policy '{}' of '{}': added {}{}", policy.has("name")
+                    ? policy.get("name").getAsString() : policyId, serviceName, addedHere,
+                    revokedHere ? ", removed users " + revokeUsers + " and groups " + revokeGroups : "");
+            added.addAll(addedHere);
+        }
+        return new ServiceAdminsResult(added, serviceWide);
     }
 
     /** A Ranger Admin REST answer: the status and the body (the error body on a failure). */

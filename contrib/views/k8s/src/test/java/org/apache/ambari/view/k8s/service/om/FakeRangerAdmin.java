@@ -54,6 +54,8 @@ public final class FakeRangerAdmin implements AutoCloseable {
     public final Map<Long, JsonObject> policies = new LinkedHashMap<>();
     /** Users by name, with the password last set (Ranger would keep a hash). */
     public final Map<String, JsonObject> users = new LinkedHashMap<>();
+    /** Groups by name. */
+    public final Map<String, JsonObject> groups = new LinkedHashMap<>();
     /** Whether the user lookup reads {@link #users} rather than answering that every user exists. */
     public volatile boolean userDirectory;
     /** Service repositories by name, with their id. */
@@ -338,6 +340,23 @@ public final class FakeRangerAdmin implements AutoCloseable {
                 }
                 default -> answer(ex, 405, "{}");
             }
+            return;
+        }
+        if (path.equals("/service/xusers/groups")) {
+            JsonArray found = new JsonArray();
+            for (JsonObject g : groups.values()) {
+                if (g.get("name").getAsString().contains(query.getOrDefault("name", ""))) found.add(g);
+            }
+            JsonObject root = new JsonObject();
+            root.add("vXGroups", found);
+            answer(ex, 200, root.toString());
+            return;
+        }
+        if (path.equals("/service/xusers/secure/groups") && "POST".equals(method)) {
+            JsonObject g = JsonParser.parseString(body).getAsJsonObject();
+            g.addProperty("id", nextId++);
+            groups.put(g.get("name").getAsString(), g);
+            answer(ex, 200, g.toString());
             return;
         }
         if (path.equals("/service/xusers/users") && !userDirectory) {

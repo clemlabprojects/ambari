@@ -297,4 +297,26 @@ class ProvisioningLedgerTest {
         assertEquals("admin", kept.issuedBy());
         assertEquals(1, ledger.principals().size());
     }
+
+    @Test
+    void theAdministratorsOfTheRangerServiceAreReadBackAndKeptByAMerge() {
+        ProvisioningLedger ledger = new ProvisioningLedger();
+        ledger.addRangerRepository(new ProvisioningLedger.RangerRepository("cdp", "trino-analytics"));
+        ledger.setRangerServiceAdmins(new ProvisioningLedger.RangerServiceAdmins("cdp", "trino-analytics",
+                List.of("alice"), List.of("trino-admins"), List.of("alice", "system"), List.of()));
+
+        ProvisioningLedger read = ProvisioningLedger.parse(ledger.toJson());
+
+        ProvisioningLedger.RangerServiceAdmins admins = read.rangerServiceAdmins();
+        assertEquals("cdp", admins.contextId());
+        assertEquals("trino-analytics", admins.service());
+        assertEquals(List.of("alice"), admins.users());
+        assertEquals(List.of("trino-admins"), admins.groups());
+        assertEquals(List.of("alice", "system"), admins.addedUsers());
+        assertEquals(List.of(), admins.addedGroups());
+        assertEquals(admins, read.copy().rangerServiceAdmins());
+        ProvisioningLedger adminsOnly = new ProvisioningLedger();
+        adminsOnly.setRangerServiceAdmins(admins);
+        assertFalse(adminsOnly.isEmpty(), "a ledger holding only administrators is stored");
+    }
 }

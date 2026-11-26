@@ -212,6 +212,54 @@ public class RangerPolicyResourceProviderTest {
     fixture.verifyScheduling();
   }
 
+  @Test
+  public void testServiceAdminsArePassedWithoutAScope() throws Exception {
+    Capture<Map<String, String>> commandParams = expectServerAction();
+    fixture.expectOneRequestScheduled();
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+
+    new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(serviceAdmins()));
+
+    Map<String, String> params = commandParams.getValue();
+    assertEquals("true", params.get("serviceAdmins"));
+    assertEquals("system,trino-analytics", params.get("userNames"));
+    assertEquals("trino-admins", params.get("groups"));
+    assertEquals("alice", params.get("revokeUserNames"));
+    assertFalse(params.containsKey("resourcesJson"));
+    assertFalse(params.containsKey("accessTypes"));
+    fixture.verifyScheduling();
+  }
+
+  @Test
+  public void testServiceAdminsWithNobodyAreRefusedWithoutScheduling() throws Exception {
+    fixture.replayAndInject(RangerPolicyResourceProvider.class, null);
+    SecurityContextHolder.getContext().setAuthentication(TestAuthenticationFactory.createAdministrator());
+    Map<String, Object> properties = serviceAdmins();
+    properties.remove("RangerPolicy/userNames");
+    properties.remove("RangerPolicy/groups");
+    properties.remove("RangerPolicy/revokeUserNames");
+
+    try {
+      new RangerPolicyResourceProvider(fixture.controller).createResources(createRequest(properties));
+      fail("Expected service administrators naming nobody to be refused");
+    } catch (SystemException expected) {
+      assertEquals("serviceAdmins needs userNames, groups, revokeUserNames or revokeGroups", expected.getMessage());
+    }
+    fixture.verifyScheduling();
+  }
+
+  private static Map<String, Object> serviceAdmins() {
+    Map<String, Object> properties = new HashMap<>();
+    properties.put("Clusters/cluster_name", CLUSTER_NAME);
+    properties.put("RangerPolicy/rangerServiceName", "trino-analytics");
+    properties.put("RangerPolicy/serviceAdmins", "true");
+    properties.put("RangerPolicy/userNames", "system,trino-analytics");
+    properties.put("RangerPolicy/groups", "trino-admins");
+    properties.put("RangerPolicy/revokeUserNames", "alice");
+    return properties;
+  }
+
   /** Captures the command parameters the provider hands to {@link EnsureRangerPolicyServerAction}. */
   @SuppressWarnings("unchecked")
   private Capture<Map<String, String>> expectServerAction() {

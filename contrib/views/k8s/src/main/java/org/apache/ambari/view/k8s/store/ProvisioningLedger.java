@@ -78,6 +78,23 @@ public final class ProvisioningLedger {
     public record RangerRepository(String contextId, String name) {}
 
     /**
+     * The administrators KDPS made of the release's Ranger service: the users and groups its deploy named in the wizard
+     * ({@code users}, {@code groups}), which an action replaying the deploy names again, and among every administrator
+     * KDPS made (those named, {@code system}, the release's principal), the ones it added itself ({@code addedUsers},
+     * {@code addedGroups}): the only ones a later deploy takes that status back from.
+     */
+    public record RangerServiceAdmins(String contextId, String service, List<String> users, List<String> groups,
+                                      List<String> addedUsers, List<String> addedGroups) {
+
+        public RangerServiceAdmins {
+            users = users == null ? List.of() : List.copyOf(users);
+            groups = groups == null ? List.of() : List.copyOf(groups);
+            addedUsers = addedUsers == null ? List.of() : List.copyOf(addedUsers);
+            addedGroups = addedGroups == null ? List.of() : List.copyOf(addedGroups);
+        }
+    }
+
+    /**
      * A Kerberos principal KDPS had issued for the release, and the Secret its keytab was written to.
      *
      * @param kdcContextId the platform context whose KDC issued it; null for the Ambari cluster's KDC (or a release
@@ -135,6 +152,7 @@ public final class ProvisioningLedger {
     private final List<Principal> principals = new ArrayList<>();
     private AtlasFederation atlasFederation;
     private TagSyncSource tagSyncSource;
+    private RangerServiceAdmins rangerServiceAdmins;
     private final List<ViewInstance> viewInstances = new ArrayList<>();
     private final List<String> vaultPaths = new ArrayList<>();
     private boolean truncated;
@@ -159,6 +177,7 @@ public final class ProvisioningLedger {
     public List<Principal> principals() { return List.copyOf(principals); }
     public AtlasFederation atlasFederation() { return atlasFederation; }
     public TagSyncSource tagSyncSource() { return tagSyncSource; }
+    public RangerServiceAdmins rangerServiceAdmins() { return rangerServiceAdmins; }
     public List<ViewInstance> viewInstances() { return List.copyOf(viewInstances); }
     public List<String> vaultPaths() { return List.copyOf(vaultPaths); }
 
@@ -168,8 +187,8 @@ public final class ProvisioningLedger {
     /** Whether nothing is recorded. */
     public boolean isEmpty() {
         return oidcClients.isEmpty() && rangerGrants.isEmpty() && rangerRepositories.isEmpty() && principals.isEmpty()
-                && atlasFederation == null && tagSyncSource == null && viewInstances.isEmpty() && vaultPaths.isEmpty()
-                && !truncated;
+                && atlasFederation == null && tagSyncSource == null && rangerServiceAdmins == null
+                && viewInstances.isEmpty() && vaultPaths.isEmpty() && !truncated;
     }
 
     public void addOidcClient(OidcClient client) { addOnce(oidcClients, client); }
@@ -218,6 +237,8 @@ public final class ProvisioningLedger {
 
     public void setTagSyncSource(TagSyncSource source) { this.tagSyncSource = source; }
 
+    public void setRangerServiceAdmins(RangerServiceAdmins admins) { this.rangerServiceAdmins = admins; }
+
     /**
      * Records a view instance; one already recorded with the same coordinates is replaced, and stays created by the
      * release when an earlier deploy created it (a redeploy finds it existing).
@@ -252,6 +273,7 @@ public final class ProvisioningLedger {
         other.principals.forEach(this::addPrincipal);
         if (other.atlasFederation != null) setAtlasFederation(other.atlasFederation);
         if (other.tagSyncSource != null) setTagSyncSource(other.tagSyncSource);
+        if (other.rangerServiceAdmins != null) setRangerServiceAdmins(other.rangerServiceAdmins);
         other.viewInstances.forEach(this::addViewInstance);
         other.vaultPaths.forEach(this::addVaultPath);
         if (other.truncated) markTruncated();
@@ -309,6 +331,12 @@ public final class ProvisioningLedger {
             if (tagSync.isObject()) {
                 ledger.setTagSyncSource(new TagSyncSource(text(tagSync, "key"), text(tagSync, "endpoint"),
                         text(tagSync, "mapper")));
+            }
+            JsonNode admins = root.path("admins");
+            if (admins.isObject()) {
+                ledger.setRangerServiceAdmins(new RangerServiceAdmins(contextOf(admins, ledgerContext),
+                        text(admins, "svc"), texts(admins.path("users")), texts(admins.path("groups")),
+                        texts(admins.path("addU")), texts(admins.path("addG"))));
             }
             for (JsonNode n : root.path("views")) {
                 ledger.addViewInstance(new ViewInstance(text(n, "view"), text(n, "version"), text(n, "instance"),
@@ -382,6 +410,14 @@ public final class ProvisioningLedger {
         if (tagSyncSource != null) {
             put(put(put(root.putObject("tagSync"), "key", tagSyncSource.sourceKey()), "endpoint", tagSyncSource.endpoint()),
                     "mapper", tagSyncSource.mapperKey());
+        }
+        if (rangerServiceAdmins != null) {
+            ObjectNode n = put(root.putObject("admins"), "svc", rangerServiceAdmins.service());
+            putContext(n, rangerServiceAdmins.contextId(), ledgerContext);
+            putTexts(n, "users", rangerServiceAdmins.users());
+            putTexts(n, "groups", rangerServiceAdmins.groups());
+            putTexts(n, "addU", rangerServiceAdmins.addedUsers());
+            putTexts(n, "addG", rangerServiceAdmins.addedGroups());
         }
         if (!viewInstances.isEmpty()) {
             ArrayNode a = root.putArray("views");
@@ -510,6 +546,23 @@ public final class ProvisioningLedger {
     private static ObjectNode put(ObjectNode node, String key, String value) {
         if (value != null && !value.isBlank()) node.put(key, value);
         return node;
+    }
+
+    private static void putTexts(ObjectNode node, String key, List<String> values) {
+        if (values != null && !values.isEmpty()) {
+            ArrayNode a = node.putArray(key);
+            values.forEach(a::add);
+        }
+    }
+
+    private static List<String> texts(JsonNode array) {
+        List<String> out = new ArrayList<>();
+        if (array != null && array.isArray()) {
+            for (JsonNode v : array) {
+                if (v != null && !v.isNull() && !v.asText().isBlank()) out.add(v.asText());
+            }
+        }
+        return out;
     }
 
     private static String text(JsonNode node, String key) {

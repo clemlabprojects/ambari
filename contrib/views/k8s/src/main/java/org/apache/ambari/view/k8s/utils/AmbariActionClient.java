@@ -1514,6 +1514,51 @@ public class AmbariActionClient {
         return postRangerPolicy(root, "revoke");
     }
 
+    /**
+     * Makes users and groups the administrators of a Ranger service through the Ambari server
+     * ({@code POST /clusters/{c}/ranger_policy} with {@code serviceAdmins=true}): with delegated administration, every
+     * access of each of the service's service-wide policies ({@code all - catalog}, {@code all - queryid}...), and takes
+     * that status back from the revoked ones. An Ambari server that does not know {@code serviceAdmins} refuses the
+     * whole request.
+     *
+     * @return the Ambari request id to wait on with {@link #waitUntilComplete}; once it completes,
+     *         {@link #taskStructuredOut} gives {@code addedUsers} and {@code addedGroups}, those it added
+     */
+    public int submitRangerServiceAdmins(String rangerServiceName, java.util.Collection<String> users,
+                                         java.util.Collection<String> groups, java.util.Collection<String> revokedUsers,
+                                         java.util.Collection<String> revokedGroups, Integer timeoutSeconds,
+                                         String context) throws Exception {
+        Objects.requireNonNull(clusterName, "clusterName must not be null for Ranger service administrators");
+        Objects.requireNonNull(rangerServiceName, "rangerServiceName");
+        JsonObject root = new JsonObject();
+        JsonObject requestInfo = new JsonObject();
+        requestInfo.addProperty("context",
+                (context == null || context.isBlank()) ? "Ensure Ranger service administrators" : context);
+        root.add("RequestInfo", requestInfo);
+
+        JsonObject rangerPolicy = new JsonObject();
+        rangerPolicy.addProperty("rangerServiceName", rangerServiceName);
+        rangerPolicy.addProperty("serviceAdmins", true);
+        addCsv(rangerPolicy, "userNames", users);
+        addCsv(rangerPolicy, "groups", groups);
+        addCsv(rangerPolicy, "revokeUserNames", revokedUsers);
+        addCsv(rangerPolicy, "revokeGroups", revokedGroups);
+        if (timeoutSeconds != null) {
+            rangerPolicy.addProperty("timeoutSeconds", timeoutSeconds);
+        }
+        root.add("RangerPolicy", rangerPolicy);
+
+        LOG.info("Submitting Ranger service administrators for service='{}': users={}, groups={}, revoked users={}, groups={}",
+                rangerServiceName, users, groups, revokedUsers, revokedGroups);
+        return postRangerPolicy(root, "service administrators");
+    }
+
+    private static void addCsv(JsonObject target, String name, java.util.Collection<String> values) {
+        if (values != null && !values.isEmpty()) {
+            target.addProperty(name, String.join(",", values));
+        }
+    }
+
     /** POSTs a {@code ranger_policy} request and returns the id of the Ambari request it started. */
     private int postRangerPolicy(JsonObject root, String what) throws Exception {
         String url = ambariApiBase + "/clusters/" + encode(clusterName) + "/ranger_policy";

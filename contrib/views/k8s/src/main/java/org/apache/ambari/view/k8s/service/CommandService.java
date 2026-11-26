@@ -254,6 +254,9 @@ public class CommandService {
      */
     static final String RANGER_PLUGIN_PRINCIPAL_PARAM = "_rangerPluginPrincipal";
 
+    /** Step parameter holding the administrators of the release's Ranger service (see {@link #rangerServiceAdminsOf}). */
+    static final String RANGER_SERVICE_ADMINS_PARAM = "_rangerServiceAdmins";
+
     /** The payload reference of a keytab a platform context's KDC issued, already stored in its Secret. */
     static final String CONTEXT_KDC_PAYLOAD_PREFIX = "context-kdc:";
 
@@ -4114,6 +4117,12 @@ public class CommandService {
         params.put("_rangerPluginUserName", rangerPluginUserName);
         params.put("_rangerPluginUserPassword", rangerPluginUserPassword);
         params.put("_rangerServiceConfigs", rangerServiceConfigs);
+        Map<String, Object> serviceAdmins = rangerServiceAdminsOf(rangerPluginSettingsSpec, request);
+        if (serviceAdmins != null) {
+            params.put(RANGER_SERVICE_ADMINS_PARAM, serviceAdmins);
+        } else {
+            params.remove(RANGER_SERVICE_ADMINS_PARAM);
+        }
         // Thread the selected platform context so the repository-creation step can route to the
         // context's own Ranger over REST (external / creds-bearing managed) instead of the Ambari
         // server. Absent/default context → the step delegates to Ambari as before.
@@ -11738,6 +11747,8 @@ public class CommandService {
                         res.put("rangerRepositoryName", rangerRepositoryName);
                         res.put("serviceId", svcId);
                         res.put("via", "context-ranger-rest");
+                        putWarnings(res, applyRangerServiceAdmins(childParams, rangerRepositoryName, repoRc, null,
+                                timeoutSeconds));
                         recordRangerRepositoryResult(id, childSt, rangerRepositoryName, impersonation, res);
                         break;
                     }
@@ -11781,6 +11792,8 @@ public class CommandService {
                     Map<String,Object> res = new LinkedHashMap<>();
                     res.put("rangerRepositoryName", rangerRepositoryName);
                     res.put("requestId", reqId);
+                    putWarnings(res, applyRangerServiceAdmins(childParams, rangerRepositoryName, null,
+                            ambariActionClient, timeoutSeconds));
                     recordRangerRepositoryResult(id, childSt, rangerRepositoryName, impersonation, res);
                   } // end remoteConfigGate guard
                 }
@@ -20205,11 +20218,199 @@ public class CommandService {
             if (impersonation.selfGrantWarning() != null) {
                 warnings.add(impersonation.selfGrantWarning());
             }
-            if (!warnings.isEmpty()) {
-                result.put("warnings", warnings);
-            }
+            putWarnings(result, warnings);
         }
         recordStepResult(commandId, childSt, gson.toJson(result));
+    }
+
+    /** Adds warnings to a step result, after those it already holds. */
+    private static void putWarnings(Map<String, Object> result, List<String> warnings) {
+        if (warnings == null || warnings.isEmpty()) {
+            return;
+        }
+        List<String> all = new ArrayList<>();
+        if (result.get("warnings") instanceof List<?> earlier) {
+            earlier.forEach(w -> all.add(String.valueOf(w)));
+        }
+        all.addAll(warnings);
+        result.put("warnings", all);
+    }
+
+    /**
+     * The administrators the service definition gives the release's Ranger service ({@code serviceAdmins} in its
+     * {@code ranger-plugin-settings}): the users and groups named in the wizard or, for an action replaying the deploy
+     * without the wizard's answers, those the deploy recorded; the users every release of the service gets; and whether
+     * the release's own principal is one of them.
+     *
+     * @return {@code users}, {@code groups}, {@code fixedUsers} and {@code pluginPrincipal}; null when the definition
+     *         names no administrators
+     */
+    Map<String, Object> rangerServiceAdminsOf(Map<String, Object> rangerPluginSettings, HelmDeployRequest request) {
+        if (rangerPluginSettings == null || !(rangerPluginSettings.get("serviceAdmins") instanceof Map<?, ?> spec)) {
+            return null;
+        }
+        String usersField = stringValue(spec.get("usersField"));
+        String groupsField = stringValue(spec.get("groupsField"));
+        Map<String, Object> form = request.getFormValues() == null ? Map.of() : request.getFormValues();
+        boolean named = (!usersField.isBlank() && ConfigResolutionService.getByDottedPath(form, usersField) != null)
+                || (!groupsField.isBlank() && ConfigResolutionService.getByDottedPath(form, groupsField) != null);
+        List<String> users;
+        List<String> groups;
+        if (named) {
+            users = csvList(usersField.isBlank() ? null : ConfigResolutionService.getByDottedPath(form, usersField));
+            groups = csvList(groupsField.isBlank() ? null : ConfigResolutionService.getByDottedPath(form, groupsField));
+        } else {
+            ProvisioningLedger.RangerServiceAdmins recorded =
+                    releases().provisioningOf(request.getNamespace(), request.getReleaseName()).rangerServiceAdmins();
+            users = recorded == null ? List.of() : recorded.users();
+            groups = recorded == null ? List.of() : recorded.groups();
+        }
+        List<String> fixedUsers = new ArrayList<>();
+        if (spec.get("users") instanceof List<?> list) {
+            list.forEach(u -> { if (u != null && !String.valueOf(u).isBlank()) fixedUsers.add(String.valueOf(u).trim()); });
+        }
+        Map<String, Object> admins = new LinkedHashMap<>();
+        admins.put("users", users);
+        admins.put("groups", groups);
+        admins.put("fixedUsers", fixedUsers);
+        admins.put("pluginPrincipal", Boolean.TRUE.equals(spec.get("pluginPrincipal"))
+                || "true".equalsIgnoreCase(stringValue(spec.get("pluginPrincipal"))));
+        return admins;
+    }
+
+    /** The names of a comma-separated value, trimmed, without blanks or repeats. */
+    static List<String> csvList(Object value) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        if (value != null) {
+            for (String name : String.valueOf(value).split(",")) {
+                if (!name.isBlank()) names.add(name.trim());
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    /**
+     * Makes the administrators the step was planned with ({@link #RANGER_SERVICE_ADMINS_PARAM}) the administrators of
+     * the release's Ranger service: with delegated administration, every access of each service-wide policy, through
+     * the context's Ranger when {@code contextRanger} is given, through the Ambari server otherwise. A name an earlier
+     * deploy added and this one no longer names loses that status; one it did not add (an administrator Ranger or an
+     * operator made) is never touched. Records in the ledger what was named and what KDPS added.
+     *
+     * @return what the operator must hear
+     * @throws IllegalStateException when administrators an earlier deploy added could not be taken back
+     */
+    List<String> applyRangerServiceAdmins(Map<String, Object> stepParams, String serviceName,
+                                          org.apache.ambari.view.k8s.model.ResolvedContext contextRanger,
+                                          AmbariActionClient ambari, int timeoutSeconds) {
+        if (!(stepParams.get(RANGER_SERVICE_ADMINS_PARAM) instanceof Map<?, ?> admins)) {
+            return List.of();
+        }
+        List<String> named = csvList(String.join(",", stringList(admins.get("users"))));
+        List<String> namedGroups = csvList(String.join(",", stringList(admins.get("groups"))));
+        LinkedHashSet<String> users = new LinkedHashSet<>(named);
+        users.addAll(stringList(admins.get("fixedUsers")));
+        if (Boolean.TRUE.equals(admins.get("pluginPrincipal"))) {
+            String own = rangerPluginShortName(stepParams);
+            if (own != null) users.add(own);
+        }
+        LinkedHashSet<String> groups = new LinkedHashSet<>(namedGroups);
+
+        ProvisioningLedger.RangerServiceAdmins earlier = releases().provisioningOf(
+                stringValue(stepParams.get("namespace")), stringValue(stepParams.get("releaseName"))).rangerServiceAdmins();
+        boolean sameService = earlier != null && serviceName.equals(earlier.service());
+        LinkedHashSet<String> revokedUsers = new LinkedHashSet<>(sameService ? earlier.addedUsers() : List.of());
+        revokedUsers.removeAll(users);
+        LinkedHashSet<String> revokedGroups = new LinkedHashSet<>(sameService ? earlier.addedGroups() : List.of());
+        revokedGroups.removeAll(groups);
+        if (users.isEmpty() && groups.isEmpty() && revokedUsers.isEmpty() && revokedGroups.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> addedUsers;
+        Set<String> addedGroups;
+        int serviceWide;
+        try {
+            if (contextRanger != null) {
+                org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ServiceAdminsResult result =
+                        org.apache.ambari.view.k8s.service.om.OmAtlasProvisioning.ensureServiceAdmins(
+                                tlsOf(contextRanger, "Ranger"), contextRanger.getRangerUrl(),
+                                contextRanger.getRangerAdminUsername(), contextRanger.getRangerAdminPassword(),
+                                serviceName, users, groups, revokedUsers, revokedGroups);
+                addedUsers = result.added().users();
+                addedGroups = result.added().groups();
+                serviceWide = result.serviceWidePolicies();
+            } else {
+                int request = ambari.submitRangerServiceAdmins(serviceName, users, groups, revokedUsers, revokedGroups,
+                        timeoutSeconds, "KDPS: administrators of Ranger service " + serviceName);
+                if (!ambari.waitUntilComplete(request, timeoutSeconds, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException(requestDidNotComplete(ambari, request));
+                }
+                com.google.gson.JsonObject out = ambari.taskStructuredOut(request).orElse(new com.google.gson.JsonObject());
+                addedUsers = new LinkedHashSet<>(jsonStrings(out, "addedUsers"));
+                addedGroups = new LinkedHashSet<>(jsonStrings(out, "addedGroups"));
+                serviceWide = out.has("serviceWidePolicies") ? out.get("serviceWidePolicies").getAsInt() : -1;
+            }
+        } catch (Exception e) {
+            LOG.warn("Ranger service '{}': could not set its administrators: {}", serviceName, e.toString());
+            if (!revokedUsers.isEmpty() || !revokedGroups.isEmpty()) {
+                throw new IllegalStateException("Could not take back the administrator rights KDPS gave " + revokedUsers
+                        + (revokedGroups.isEmpty() ? "" : " and groups " + revokedGroups) + " on Ranger service '"
+                        + serviceName + "': " + reasonOf(e) + ". Remove them from the service's 'all - ...' policies in"
+                        + " Ranger, or fix the cause and deploy again.", e);
+            }
+            return List.of("Ranger service '" + serviceName + "': could not make " + users
+                    + (groups.isEmpty() ? "" : " and groups " + groups) + " its administrators (" + reasonOf(e)
+                    + "). Add them to the service's 'all - ...' policies in Ranger, or fix the cause and deploy again.");
+        }
+
+        // Those KDPS added before and still names stay its own; those it adds now join them.
+        LinkedHashSet<String> ownUsers = new LinkedHashSet<>(sameService ? earlier.addedUsers() : List.of());
+        ownUsers.retainAll(users);
+        ownUsers.addAll(addedUsers);
+        LinkedHashSet<String> ownGroups = new LinkedHashSet<>(sameService ? earlier.addedGroups() : List.of());
+        ownGroups.retainAll(groups);
+        ownGroups.addAll(addedGroups);
+        String contextId = stringValue(stepParams.get("_platformContextId"));
+        recordProvisioning(stepParams, ledger -> ledger.setRangerServiceAdmins(new ProvisioningLedger.RangerServiceAdmins(
+                contextId.isBlank() ? null : contextId, serviceName, named, namedGroups,
+                new ArrayList<>(ownUsers), new ArrayList<>(ownGroups))));
+        LOG.info("Ranger service '{}': administrators {} and groups {}; added {} and groups {}; taken back {} and groups {}",
+                serviceName, users, groups, addedUsers, addedGroups, revokedUsers, revokedGroups);
+        if (serviceWide == 0) {
+            return List.of("Ranger service '" + serviceName + "' has no policy covering every resource of a kind ('all -"
+                    + " ...'), so " + users + " were made administrators of nothing. Restore the service's default"
+                    + " policies in Ranger and deploy again.");
+        }
+        return List.of();
+    }
+
+    /**
+     * The short name Ranger knows the release's plugin by: the user allowed to download its policies (the principal of
+     * a Kerberized plugin), otherwise the plugin's own user; null when the step has neither.
+     */
+    static String rangerPluginShortName(Map<String, Object> stepParams) {
+        if (stepParams.get("_rangerServiceConfigs") instanceof Map<?, ?> configs) {
+            List<String> downloadUsers = csvList(configs.get("policy.download.auth.users"));
+            if (!downloadUsers.isEmpty()) return downloadUsers.get(0);
+        }
+        String pluginUser = stringValue(stepParams.get("_rangerPluginUserName"));
+        return pluginUser.isBlank() ? null : pluginUser;
+    }
+
+    private static List<String> stringList(Object value) {
+        List<String> out = new ArrayList<>();
+        if (value instanceof Collection<?> values) {
+            values.forEach(v -> { if (v != null && !String.valueOf(v).isBlank()) out.add(String.valueOf(v).trim()); });
+        }
+        return out;
+    }
+
+    private static List<String> jsonStrings(com.google.gson.JsonObject object, String member) {
+        List<String> out = new ArrayList<>();
+        if (object.has(member) && object.get(member).isJsonArray()) {
+            object.getAsJsonArray(member).forEach(e -> out.add(e.getAsString()));
+        }
+        return out;
     }
 
     /**
