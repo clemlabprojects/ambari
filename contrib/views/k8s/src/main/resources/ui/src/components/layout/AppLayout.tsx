@@ -323,7 +323,8 @@ const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
           </div>
           <div className="header-right">
             <Space size={8} align="center">
-              <ClusterSelector />
+              {/* The Releases page lists every cluster and has its own cluster filter. */}
+              {location.pathname !== '/helm' && <ClusterSelector />}
               <NamespaceSelector />
               {platform && (
                 <Tooltip title="Detected target platform">

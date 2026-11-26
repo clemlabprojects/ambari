@@ -83,8 +83,9 @@ const ExternalCleanupChoice: React.FC<{
 
 const HelmReleasesPage: React.FC = () => {
   const { status, refresh, nodes, events } = useClusterStatus();
-  // The releases of every cluster KDPS knows, unless the operator picks one here or in the top bar.
-  const { cluster: viewedCluster, clusters } = useViewedCluster();
+  // The releases of every cluster KDPS knows, unless the operator picks one in the page's filter (the top bar's
+  // cluster selector is not shown on this page).
+  const { clusters } = useViewedCluster();
   const severalClusters = clusters.length > 1;
   const [listedScope, setListedScope] = useState<string>(() => {
     try { return localStorage.getItem('kdps.releases.cluster') || ALL_CLUSTERS; } catch { return ALL_CLUSTERS; }
@@ -301,14 +302,6 @@ const HelmReleasesPage: React.FC = () => {
   useEffect(() => {
     void fetchReleases(1, pageSize, !showAllReleases, scope);
   }, [scope, clusterIds]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Another cluster chosen in the top bar: the page lists that cluster.
-  const viewedInTopBar = React.useRef(viewedCluster);
-  useEffect(() => {
-    if (viewedInTopBar.current === viewedCluster) return;
-    viewedInTopBar.current = viewedCluster;
-    chooseListedScope(viewedCluster || 'default');
-  }, [viewedCluster]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Another page of the list: cut from the rows already read when every cluster is listed. */
   const showPage = (pageNum: number, size: number) => {
@@ -1214,12 +1207,19 @@ const HelmReleasesPage: React.FC = () => {
             </Space>
           )
         },
-        ...(severalClusters ? [{
-          title: 'Cluster', key: 'cluster', width: 140,
-          render: (_: any, r: HelmRelease) => <Tag>{clusterName(r.kubernetesCluster)}</Tag>,
-          sorter: (a: any, b: any) => clusterName(a.kubernetesCluster).localeCompare(clusterName(b.kubernetesCluster)),
-        }] : []),
-        { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', className: 'kdps-mono', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
+        // With several clusters the cluster of a release is shown under its namespace rather than in a column of
+        // its own, which kept the table wider than the page.
+        severalClusters ? {
+          title: 'Namespace / Cluster', key: 'namespace',
+          render: (_: any, r: HelmRelease) => (
+            <Space size={2} direction="vertical" align="start">
+              <span className="kdps-mono">{r.namespace}</span>
+              <Tag style={{ marginInlineEnd: 0 }}>{clusterName(r.kubernetesCluster)}</Tag>
+            </Space>
+          ),
+          sorter: (a: any, b: any) => clusterName(a.kubernetesCluster).localeCompare(clusterName(b.kubernetesCluster))
+            || a.namespace.localeCompare(b.namespace),
+        } : { title: 'Namespace', dataIndex: 'namespace', key: 'namespace', className: 'kdps-mono', sorter: (a: any, b: any) => a.namespace.localeCompare(b.namespace) },
         {
           title: 'Chart',
           dataIndex: 'chart',
@@ -1231,14 +1231,12 @@ const HelmReleasesPage: React.FC = () => {
               <Space size={4} direction="vertical" align="start">
                 <span style={{ whiteSpace: 'nowrap' }}>{String(r.chart || '').trim()}</span>
                 {r.version ? (
-                  <Space size={4}>
-                    <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>v{String(r.version).trim()}</Text>
-                    {upgradeTargetVersion ? (
-                      <Tooltip title={`Catalog ships chart v${upgradeTargetVersion}. Click the row menu to upgrade in place.`}>
-                        <Tag color="gold" style={{ marginLeft: 0 }}>Upgrade → v{upgradeTargetVersion}</Tag>
-                      </Tooltip>
-                    ) : null}
-                  </Space>
+                  <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>v{String(r.version).trim()}</Text>
+                ) : null}
+                {r.version && upgradeTargetVersion ? (
+                  <Tooltip title={`Catalog ships chart v${upgradeTargetVersion}. Click the row menu to upgrade in place.`}>
+                    <Tag color="gold" style={{ marginInlineEnd: 0 }}>Upgrade → v{upgradeTargetVersion}</Tag>
+                  </Tooltip>
                 ) : null}
               </Space>
             );
@@ -1359,6 +1357,8 @@ const HelmReleasesPage: React.FC = () => {
         title: 'Actions',
         key: 'actions',
         width: 90,
+        // Stays in view when the table scrolls sideways.
+        fixed: 'right' as const,
         render: (_: any, record: any) => {
             const menuItems = buildMenuItems(record);
             return (
@@ -1472,6 +1472,10 @@ const HelmReleasesPage: React.FC = () => {
               rowKey={(releaseRecord:any) => releaseRowKey(releaseRecord)}
               loading={isLoading || status === 'loading'}
               size="small"
+              // A table wider than the page scrolls inside its card instead of running past it. The automatic layout
+              // is kept (a pinned column would otherwise switch the table to fixed column widths).
+              scroll={{ x: true }}
+              tableLayout="auto"
               onRow={(record: any) => ({
                 style: { cursor: 'pointer' },
                 // Click anywhere on the row (except an interactive cell — name link, action buttons,
