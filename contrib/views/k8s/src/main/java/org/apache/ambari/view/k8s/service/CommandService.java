@@ -240,6 +240,13 @@ public class CommandService {
      */
     static final String KDC_CONTEXT_PARAM = "_kdcContextId";
 
+    /**
+     * Root parameter holding the Kerberos realm of the release's keytabs: the platform context's realm when its KDC
+     * issues them, the managed cluster's otherwise. The Ranger plugin logs in with the same keytab, so its principal
+     * is built in this realm.
+     */
+    static final String KERBEROS_REALM_PARAM = "_kerberosRealm";
+
     /** The payload reference of a keytab a platform context's KDC issued, already stored in its Secret. */
     static final String CONTEXT_KDC_PAYLOAD_PREFIX = "context-kdc:";
 
@@ -1027,6 +1034,27 @@ public class CommandService {
         String safeValue = tokenValue == null ? "" : tokenValue;
         Pattern tokenPattern = Pattern.compile("\\{\\{\\s*" + Pattern.quote(tokenName) + "\\s*\\}\\}");
         return tokenPattern.matcher(templateValue).replaceAll(Matcher.quoteReplacement(safeValue));
+    }
+
+    /**
+     * The realm the Ranger plugin of a release logs in to, the one of the release's keytabs: what the deploy resolved
+     * ({@link #KERBEROS_REALM_PARAM}), otherwise the managed cluster's for a release on that cluster. A release on
+     * another platform context never gets the managed cluster's realm: its keytabs are not of that realm, and the
+     * Ambari running KDPS may manage no cluster at all.
+     *
+     * @return the realm, or null when it is unknown
+     */
+    private String rangerPluginKerberosRealm(Map<String, Object> params, AmbariActionClient ambariActionClient,
+                                             String clusterName) {
+        String realm = stringValue(params.get(KERBEROS_REALM_PARAM));
+        if (!realm.isBlank()) {
+            return realm;
+        }
+        if (!usesManagedContext(params)) {
+            return null;
+        }
+        String clusterRealm = resolveKerberosRealmFromAmbari(ambariActionClient, clusterName);
+        return clusterRealm == null || clusterRealm.isBlank() ? null : clusterRealm.trim();
     }
 
     /**
@@ -3331,78 +3359,68 @@ public class CommandService {
                         );
                     }
 
-                    if (kerberosClusterEnabled && ambariActionClient != null && cluster != null && !cluster.isBlank()) {
-                        try {
-                            String kerberosRealm = ambariActionClient.getDesiredConfigProperty(
-                                    cluster,
-                                    this.commandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM").type,
-                                    this.commandUtils.DYNAMIC_SOURCE_MAP.get("AMBARI_KERBEROS_REALM").key
-                            );
+                    if (kerberosClusterEnabled) {
+                        // The Ranger plugin logs in with the SAME mounted keytab as the service (krb5_keytab_path), so
+                        // its principal must be the one in that keytab:
+                        //  • an operator's external keytab (EXTERNAL / CDP backend): their principal, e.g.
+                        //    trino/coordinator@DEV01 from hive.externalKeytabPrincipal, used as it is, realm included;
+                        //  • a keytab KDPS issues, from the managed cluster's KDC or from the platform context's:
+                        //    <krb5_princ_srv>-<namespace> in the realm of that KDC, shortened like the keytab's principal
+                        //    to fit FreeIPA's 32-char uid (AMBARI-560/562).
+                        // Otherwise the plugin logs in as a principal its keytab does not hold, or Ranger authorizes
+                        // another name, and the policy download is refused.
+                        String rangerKeytabPath = resolveStringValue(
+                                spec.get("krb5_keytab_path"),
+                                "/etc/security/keytabs/service.keytab"
+                        );
+                        String rangerPrincipalFull = resolveExternalRangerPrincipal(request);
+                        String missingPrincipalReason = null;
+                        if (rangerPrincipalFull != null && !rangerPrincipalFull.isBlank()) {
+                            LOG.info("Ranger plugin principal (external keytab) for {} = {}", type, rangerPrincipalFull);
+                        } else {
                             String rangerPrincipalPrefix = resolveStringValue(spec.get("krb5_princ_srv"), null);
+                            String kerberosRealm = rangerPluginKerberosRealm(params, ambariActionClient, cluster);
                             if (rangerPrincipalPrefix == null || rangerPrincipalPrefix.isBlank()) {
-                                LOG.warn("Ranger Kerberos principal prefix (krb5_princ_srv) missing for {}", type);
+                                missingPrincipalReason = "the service definition names no principal (krb5_princ_srv)";
+                            } else if (kerberosRealm == null) {
+                                missingPrincipalReason = "the Kerberos realm of its keytab is unknown";
                             } else {
-                                String rangerKeytabPath = resolveStringValue(
-                                        spec.get("krb5_keytab_path"),
-                                        "/etc/security/keytabs/service.keytab"
-                                );
-                                // The Ranger plugin logs in with the SAME mounted keytab as the service
-                                // (krb5_keytab_path). Its principal must MATCH what's in that keytab:
-                                //  • EXTERNAL context: the operator's external keytab holds THEIR principal
-                                //    (e.g. trino/coordinator@DEV01, from hive.externalKeytabPrincipal) — the
-                                //    same one wired to Hive/HDFS. Use it verbatim (including its own realm).
-                                //  • MANAGED context: KDPS mints <krb5_princ_srv>-<namespace> in the local
-                                //    realm, shortened to fit FreeIPA's 32-char uid (AMBARI-560/562) — apply
-                                //    the identical normalization so the plugin principal + download auth-users
-                                //    match the minted keytab.
-                                // Otherwise the plugin kinits as a principal absent from its keytab (or Ranger
-                                // authorizes the wrong name) and policy download is denied.
-                                String externalRangerPrincipal = resolveExternalRangerPrincipal(request);
-                                String rangerPrincipalFull;
-                                String rangerPrincipalPrimary;
-                                if (externalRangerPrincipal != null && !externalRangerPrincipal.isBlank()) {
-                                    rangerPrincipalFull = externalRangerPrincipal;
-                                    int at = rangerPrincipalFull.indexOf('@');
-                                    String prim = at >= 0 ? rangerPrincipalFull.substring(0, at) : rangerPrincipalFull;
-                                    // Ranger authorizes the short name: a svc/host principal maps to its service
-                                    // component under Ranger's default auth_to_local; a user-style one to itself.
-                                    int slash = prim.indexOf('/');
-                                    rangerPrincipalPrimary = slash >= 0 ? prim.substring(0, slash) : prim;
-                                    LOG.info("Ranger plugin principal (external keytab) for {} = {} (auth-users={})",
-                                            type, rangerPrincipalFull, rangerPrincipalPrimary);
-                                } else {
-                                    rangerPrincipalPrefix = rangerPrincipalPrefix + "-" + request.getNamespace();
-                                    rangerPrincipalFull =
-                                            normalizeKerberosPrincipalLength(rangerPrincipalPrefix + "@" + kerberosRealm);
-                                    int atIdx = rangerPrincipalFull.indexOf('@');
-                                    rangerPrincipalPrimary =
-                                            atIdx >= 0 ? rangerPrincipalFull.substring(0, atIdx) : rangerPrincipalFull;
-                                }
-                                rangerSecurityConfig.put(
-                                        "ranger.plugin." + rangerServiceType + ".ugi.login.type",
-                                        "keytab"
-                                );
-                                rangerSecurityConfig.put(
-                                        "ranger.plugin." + rangerServiceType + ".ugi.keytab.principal",
-                                        rangerPrincipalFull
-                                );
-                                rangerSecurityConfig.put(
-                                        "ranger.plugin." + rangerServiceType + ".ugi.keytab.file",
-                                        rangerKeytabPath
-                                );
-                                rangerSecurityConfig.put(
-                                        "ranger.plugin." + rangerServiceType + ".ugi.initialize",
-                                        "true"
-                                );
-                                rangerAuditKerberosPrincipal = rangerPrincipalFull;
-                                rangerAuditKerberosKeytab = rangerKeytabPath;
-                                rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrimary);
-                                rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrimary);
+                                rangerPrincipalFull = normalizeKerberosPrincipalLength(
+                                        rangerPrincipalPrefix + "-" + request.getNamespace() + "@" + kerberosRealm);
                             }
-                        } catch (Exception ex) {
-                            LOG.warn("Failed to resolve Kerberos realm for Ranger config: {}", ex.toString());
                         }
-                    } else if (!kerberosClusterEnabled) {
+                        if (missingPrincipalReason != null) {
+                            LOG.warn("No Kerberos login for the Ranger plugin of {}/{}: {}", request.getNamespace(),
+                                    request.getReleaseName(), missingPrincipalReason);
+                            rangerAuditWarnings.add("Kerberos is on for release " + request.getReleaseName()
+                                    + ", but its Ranger plugin was given no Kerberos login: " + missingPrincipalReason
+                                    + ". A Kerberized Ranger refuses the policy downloads of a plugin without one.");
+                        } else {
+                            String rangerPrincipalPrimary = principalShortName(rangerPrincipalFull);
+                            rangerSecurityConfig.put(
+                                    "ranger.plugin." + rangerServiceType + ".ugi.login.type",
+                                    "keytab"
+                            );
+                            rangerSecurityConfig.put(
+                                    "ranger.plugin." + rangerServiceType + ".ugi.keytab.principal",
+                                    rangerPrincipalFull
+                            );
+                            rangerSecurityConfig.put(
+                                    "ranger.plugin." + rangerServiceType + ".ugi.keytab.file",
+                                    rangerKeytabPath
+                            );
+                            rangerSecurityConfig.put(
+                                    "ranger.plugin." + rangerServiceType + ".ugi.initialize",
+                                    "true"
+                            );
+                            rangerAuditKerberosPrincipal = rangerPrincipalFull;
+                            rangerAuditKerberosKeytab = rangerKeytabPath;
+                            // Ranger authorizes the short name: a service/host principal maps to its service part
+                            // under Ranger's default auth_to_local, a user-style one to itself.
+                            rangerExtraServiceConfigs.put("policy.download.auth.users", rangerPrincipalPrimary);
+                            rangerExtraServiceConfigs.put("tag.download.auth.users", rangerPrincipalPrimary);
+                        }
+                    } else {
                         String rangerPluginUserName = resolveStringValue(spec.get("plugin_username"), null);
                         if (rangerPluginUserName != null && !rangerPluginUserName.isBlank()) {
                             // Unlike the other Ranger objects this Secret stays shared by the namespace: every
@@ -8836,6 +8854,11 @@ public class CommandService {
             // The principals of a context's KDC are in that context's realm, not the cluster's.
             kerberosRealm = kdcContextId != null ? ctxResolvedKrbFields.get("kerberos.realm")
                     : resolveKerberosRealmFromAmbari(ambariActionClient, cluster);
+            // The realm of the keytabs KDPS issues for the release. An operator keytab on another context is of the
+            // operator's realm, which the managed cluster's says nothing about.
+            if (kerberosRealm != null && !kerberosRealm.isBlank() && (kdcContextId != null || !externalContextSelected)) {
+                params.put(KERBEROS_REALM_PARAM, kerberosRealm.trim());
+            }
         }
         // A context's KDC is reached through Ambari server without any cluster.
         boolean ambariAvailable = kdcContextId != null

@@ -52,6 +52,7 @@ import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -64,6 +65,7 @@ class CommandServiceRangerAuditTest {
     private static final String NS = "analytics";
     private static final String RELEASE = "trino-odp";
     private static final String AUDIT_MAP = RELEASE + "-ranger-trino-audit";
+    private static final String SECURITY_MAP = RELEASE + "-ranger-trino-security";
 
     @TempDir
     Path tmp;
@@ -143,11 +145,21 @@ class CommandServiceRangerAuditTest {
     private List<String> materialize(Map<String, Object> values, boolean withHadoopConf, Map<String, Object> params,
                                      org.apache.ambari.view.k8s.utils.AmbariActionClient ambari, String cluster)
             throws Exception {
+        return materialize(values, withHadoopConf, params, ambari, cluster, null);
+    }
+
+    private List<String> materialize(Map<String, Object> values, boolean withHadoopConf, Map<String, Object> params,
+                                     org.apache.ambari.view.k8s.utils.AmbariActionClient ambari, String cluster,
+                                     Map<String, Object> formValues)
+            throws Exception {
         HelmDeployRequest request = new HelmDeployRequest();
         request.setReleaseName(RELEASE);
         request.setNamespace(NS);
         request.setServiceKey("TRINO");
         request.setRanger(trinoRangerSpec());
+        if (formValues != null) {
+            request.setFormValues(formValues);
+        }
         if (withHadoopConf) {
             request.setRequiredConfigMaps(trinoRequiredConfigMaps());
         }
@@ -166,12 +178,21 @@ class CommandServiceRangerAuditTest {
     }
 
     /** The properties of the audit ConfigMap the deploy wrote, by name. */
-    @SuppressWarnings("unchecked")
     private Map<String, String> auditProperties() {
+        return configMapProperties(AUDIT_MAP, "ranger-trino-audit.xml");
+    }
+
+    /** The properties of the plugin's security ConfigMap the deploy wrote, by name. */
+    private Map<String, String> securityProperties() {
+        return configMapProperties(SECURITY_MAP, "ranger-trino-security.xml");
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> configMapProperties(String configMap, String file) {
         ArgumentCaptor<String> names = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Map<String, String>> data = ArgumentCaptor.forClass(Map.class);
         verify(k8s, atLeastOnce()).createOrUpdateConfigMap(eq(NS), names.capture(), data.capture(), anyMap(), anyMap());
-        String xml = data.getAllValues().get(names.getAllValues().indexOf(AUDIT_MAP)).get("ranger-trino-audit.xml");
+        String xml = data.getAllValues().get(names.getAllValues().indexOf(configMap)).get(file);
         Map<String, String> properties = new LinkedHashMap<>();
         java.util.regex.Matcher m = java.util.regex.Pattern
                 .compile("<name>([^<]*)</name>\\s*<value>([^<]*)</value>").matcher(xml);
@@ -290,6 +311,87 @@ class CommandServiceRangerAuditTest {
         assertTrue(warnings.stream().anyMatch(w -> w.contains("Solr") && w.contains("'trino-" + NS + "'")), warnings.toString());
         assertTrue(warnings.stream().anyMatch(w -> w.contains("HDFS") && w.contains("/ranger/audit/trino")
                 && w.contains("'trino-" + NS + "'")), warnings.toString());
+    }
+
+    /** A deploy on a CDP platform context whose KDC issues the release's keytabs, in the context's realm. */
+    private Map<String, Object> cdpContextDeployParams() {
+        platform.setId("cdp");
+        platform.setKind(ContextService.KIND_CDP);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("kerberosClusterEnabled", true);
+        params.put("_platformContextId", "cdp");
+        params.put(CommandService.KERBEROS_REALM_PARAM, "CDP.EXAMPLE.COM");
+        return params;
+    }
+
+    private void assertPluginLogsInAs(String principal, String keytab, String downloadUser, Map<String, Object> params) {
+        Map<String, String> security = securityProperties();
+        assertEquals("true", security.get("ranger.plugin.trino.ugi.initialize"));
+        assertEquals("keytab", security.get("ranger.plugin.trino.ugi.login.type"));
+        assertEquals(principal, security.get("ranger.plugin.trino.ugi.keytab.principal"));
+        assertEquals(keytab, security.get("ranger.plugin.trino.ugi.keytab.file"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> serviceConfigs = (Map<String, String>) params.get("_rangerServiceConfigs");
+        assertEquals(downloadUser, serviceConfigs.get("policy.download.auth.users"));
+        assertEquals(downloadUser, serviceConfigs.get("tag.download.auth.users"));
+    }
+
+    @Test
+    void anAmbariWithoutClusterLogsThePluginInWithTheKeytabOfTheContextsKdc() throws Exception {
+        clusterAuditingToSolrAndHdfs();
+        Map<String, Object> params = cdpContextDeployParams();
+
+        materialize(new LinkedHashMap<>(), true, params, null, null);
+
+        assertPluginLogsInAs("trino-" + NS + "@CDP.EXAMPLE.COM", "/etc/security/keytabs/service.keytab",
+                "trino-" + NS, params);
+        assertEquals("trino-" + NS + "@CDP.EXAMPLE.COM", auditProperties().get("xasecure.audit.jaas.Client.option.principal"));
+    }
+
+    @Test
+    void aReleaseOnAnotherContextNeverGetsTheRealmOfTheClusterAmbariManages() throws Exception {
+        org.apache.ambari.view.k8s.utils.AmbariActionClient ambari =
+                mock(org.apache.ambari.view.k8s.utils.AmbariActionClient.class);
+        doReturn("ODP.EXAMPLE.COM").when(ambari).getDesiredConfigProperty(any(), eq("kerberos-env"), eq("realm"));
+        Map<String, Object> params = cdpContextDeployParams();
+
+        materialize(new LinkedHashMap<>(), true, params, ambari, "odp");
+
+        assertPluginLogsInAs("trino-" + NS + "@CDP.EXAMPLE.COM", "/etc/security/keytabs/service.keytab",
+                "trino-" + NS, params);
+        verify(ambari, never()).getDesiredConfigProperty(any(), eq("kerberos-env"), eq("realm"));
+    }
+
+    @Test
+    void anOperatorKeytabLogsThePluginInAsItsPrincipalWithoutAnyRealmLookup() throws Exception {
+        Map<String, Object> params = cdpContextDeployParams();
+        params.remove(CommandService.KERBEROS_REALM_PARAM);
+        Map<String, Object> hive = new LinkedHashMap<>();
+        hive.put("externalKeytabSecret", "trino-cdp-keytab");
+        hive.put("externalKeytabPrincipal", "trino/coordinator@CDP.EXAMPLE.COM");
+        Map<String, Object> formValues = new LinkedHashMap<>();
+        formValues.put("hive", hive);
+
+        materialize(new LinkedHashMap<>(), true, params, null, null, formValues);
+
+        assertPluginLogsInAs("trino/coordinator@CDP.EXAMPLE.COM", "/etc/security/keytabs/service.keytab", "trino",
+                params);
+    }
+
+    @Test
+    void aKerberizedReleaseWhoseRealmIsUnknownIsToldThePluginHasNoLogin() throws Exception {
+        org.apache.ambari.view.k8s.utils.AmbariActionClient ambari =
+                mock(org.apache.ambari.view.k8s.utils.AmbariActionClient.class);
+        doReturn("ODP.EXAMPLE.COM").when(ambari).getDesiredConfigProperty(any(), eq("kerberos-env"), eq("realm"));
+        Map<String, Object> params = cdpContextDeployParams();
+        params.remove(CommandService.KERBEROS_REALM_PARAM);
+
+        List<String> warnings = materialize(new LinkedHashMap<>(), true, params, ambari, "odp");
+
+        assertEquals("false", securityProperties().get("ranger.plugin.trino.ugi.initialize"));
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("no Kerberos login")
+                && w.contains("realm of its keytab is unknown")), warnings.toString());
+        assertTrue(!params.containsKey("_rangerServiceConfigs"), params.toString());
     }
 
     @Test
