@@ -47,9 +47,11 @@ limitations under the License.
              this fallback only applies to an architecture none of them names. -->
         <ambari.grafana.arch>amd64</ambari.grafana.arch>
         <!-- helm-java embeds Helm in the view (install, upgrade, uninstall, repositories, show). Its version decides
-             which Helm library parses chart archives and repository indexes in the server JVM: 0.0.21 bundles Helm
-             3.21.0, past the chart-loading and index-parsing fixes of 3.17.3 and 3.18.5. -->
-        <helm-java.version>0.0.21</helm-java.version>
+             which Helm library parses chart archives and repository indexes in the server JVM: 0.0.23 bundles Helm
+             3.22.1, past the chart-loading and index-parsing fixes of 3.17.3 and 3.18.5. Up to 0.0.22 the first
+             install replaced the JVM's SIGTERM handler for good: ambari-server stop then waited its whole timeout
+             and killed the server, and the view's shutdown hook never ran. -->
+        <helm-java.version>0.0.23</helm-java.version>
         <fabric8.k8s-client.version>6.12.1</fabric8.k8s-client.version>
         <jersey.version>2.25.1</jersey.version>
         <junit.jupiter.version>5.8.2</junit.jupiter.version>
