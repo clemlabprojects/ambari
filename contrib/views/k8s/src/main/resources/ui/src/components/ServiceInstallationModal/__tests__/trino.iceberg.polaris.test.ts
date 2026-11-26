@@ -51,7 +51,7 @@ const ON = { 'icebergCatalog.enabled': true, 'icebergCatalog.s3Region': 'us-east
 
 describe('TRINO service.json — Iceberg catalog on Polaris', () => {
   it('declares the chart pin, the four bindings and the polaris requiresContext entry', () => {
-    expect(def.version).toBe('1.44.4');  // 1.43.11 added tag sync, 1.43.12 added dynamic catalogs, 1.43.15 heap from the memory limit, 1.43.16 credentials from Secrets, 1.43.17 Ranger audit destinations, 1.43.18 KEDA CA key, 1.43.19-20 LDAP and AD login, 1.43.21 OpenShift Route serves the ingress certificate, 1.44.0 published as trino with Trino 484, 1.44.1 its ODP 1.3.2.0-67 image, 1.44.2 the -69 image that reports its version, 1.44.3 Kerberos login of the Ranger audit writers on JDK 24+, 1.44.4 Ranger HDFS audit reads the cluster's Hadoop configuration
+    expect(def.version).toBe('1.44.5');  // 1.43.11 added tag sync, 1.43.12 added dynamic catalogs, 1.43.15 heap from the memory limit, 1.43.16 credentials from Secrets, 1.43.17 Ranger audit destinations, 1.43.18 KEDA CA key, 1.43.19-20 LDAP and AD login, 1.43.21 OpenShift Route serves the ingress certificate, 1.44.0 published as trino with Trino 484, 1.44.1 its ODP 1.3.2.0-67 image, 1.44.2 the -69 image that reports its version, 1.44.3 Kerberos login of the Ranger audit writers on JDK 24+, 1.44.4 Ranger HDFS audit reads the cluster's Hadoop configuration, 1.44.5 tag projector 0.1.1 for several Hive Ranger services
     expect(BINDINGS.map((b: any) => b.name).sort()).toEqual([
       'iceberg-catalog',
       'iceberg-catalog-s3-endpoint',
