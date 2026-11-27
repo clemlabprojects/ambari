@@ -893,6 +893,10 @@ public class ContextService {
         noteSharedRealm(rc, entity);
         alignRealmWithContextKrb5Conf(rc);
         markKerberosEnabled(rc, effectiveAmbari, effectiveCluster);
+        // The Ambari server itself, for a chart whose pods call its REST API (the built-in services never
+        // do: the view calls Ambari for them).
+        rc.getResolvedFields().putAll(ambariFields(rc.getKind(), rc.getClusterName(),
+                KIND_MANAGED.equals(rc.getKind()) ? localAmbariApiBase() : null, rc.getRemoteAmbariUrl()));
 
         // Populate the typed OIDC admin-credential accessors used by the OIDC client-registration
         // step and by the derived-profile logic — for EXTERNAL (typed config + decrypted secret) and
@@ -1204,6 +1208,42 @@ public class ContextService {
         if (oidcOrPolaris) {
             rc.getNotices().add(SHARED_REALM_NOTICE);
         }
+    }
+
+    /** The local Ambari's REST API base ({@code scheme://host:port/api/v1}), or null when it cannot be told. */
+    private String localAmbariApiBase() {
+        try {
+            return org.apache.ambari.view.k8s.utils.AmbariLoopbackUrlResolver.resolveApiBase(viewContext);
+        } catch (RuntimeException e) {
+            LOG.debug("ContextService: the local Ambari API address is not known: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * What a context says of its Ambari server, as resolved fields a service definition can read:
+     * {@code ambari.clusterName} and {@code ambari.apiUrl} (the REST API base, ending in {@code /api/v1}).
+     * A MANAGED context is the Ambari this view runs in; a REMOTE one the Ambari it was given. The other
+     * kinds (EXTERNAL, CDP, none) have no Ambari: they get neither key, so a definition's Ambari part is
+     * skipped or asked of the operator. No credential is ever among them.
+     *
+     * @param localApiBase    the local Ambari's API base, for a MANAGED context
+     * @param remoteAmbariUrl the remote Ambari's address as the operator typed it, for a REMOTE context
+     */
+    static Map<String, String> ambariFields(String kind, String clusterName, String localApiBase, String remoteAmbariUrl) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        String api;
+        if (KIND_MANAGED.equals(kind)) {
+            api = localApiBase;
+        } else if (KIND_REMOTE.equals(kind)) {
+            String base = isBlank(remoteAmbariUrl) ? "" : remoteAmbariUrl.trim().replaceAll("/+$", "");
+            api = base.isEmpty() || base.endsWith("/api/v1") ? base : base + "/api/v1";
+        } else {
+            return fields;
+        }
+        if (!isBlank(clusterName)) fields.put("ambari.clusterName", clusterName.trim());
+        if (!isBlank(api)) fields.put("ambari.apiUrl", api.trim());
+        return fields;
     }
 
     private ResolvedContext resolveManaged(KdpsContextEntity entity, AmbariActionClient ambari,

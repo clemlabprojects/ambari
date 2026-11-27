@@ -60,6 +60,22 @@ values (+ encrypts `secret` fields).
 
 ---
 
+### The Ambari server itself
+
+Besides the capability fields, a context that has an Ambari server resolves two fields a definition reads
+like any other (`{"type": "context", "key": "ambari.apiUrl"}`, or a `context-resolved` form field):
+
+| field | value |
+|---|---|
+| `ambari.clusterName` | the cluster's name in Ambari |
+| `ambari.apiUrl` | the REST API base, ending in `/api/v1`: this Ambari for a **managed** context (the address `AmbariLoopbackUrlResolver` gives, see AMBARI_LOOPBACK.md), the Ambari it was given for a **remote** one |
+
+They are for a chart whose pods call Ambari themselves; the built-in services do not need them, since the view
+calls Ambari for them. An EXTERNAL or CDP context has no Ambari and resolves neither. No credential is ever
+among them: such a chart signs in to Ambari with its own identity (its keytab, as a trusted proxy).
+
+---
+
 ## 2. `requiresContext` (service.json)
 
 A service declares what it needs from whatever context it deploys against:
