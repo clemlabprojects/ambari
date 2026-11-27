@@ -172,6 +172,15 @@ class MetadataServer(Script):
 
     File(params.pid_file, action="delete")
 
+    # The Atlas stop script sends SIGTERM, waits 30 seconds and removes the pid file even when the server is
+    # still running. A server left behind keeps its port: the next start, and the server of the next version
+    # after an upgrade, cannot bind and the old one keeps serving. Wait for the server to exit, then kill it.
+    # The pattern cannot match the shell running it ([o]rg).
+    Execute(format("for i in $(seq 1 30); do pgrep -u {params.metadata_user} -f '[o]rg.apache.atlas.Atlas' >/dev/null || exit 0; sleep 2; done; "
+                   "pkill -KILL -u {params.metadata_user} -f '[o]rg.apache.atlas.Atlas' || true"),
+            user=params.metadata_user
+    )
+
   def disable_security(self, env):
     import params
     if not params.zookeeper_quorum:
