@@ -85,10 +85,11 @@
       {
         "name": "ozone_capacity_utilization",
         "label": "Ozone Capacity Utilization",
-        "description": "This service-level alert is triggered if the Ozone capacity utilization exceeds the configured warning and critical thresholds. It use recon API for the CapacityUsed and CapacityRemaining properties. The threshold values are in percent.",
+        "description": "This service-level alert is triggered if the Ozone capacity utilization exceeds the configured warning and critical thresholds. It reads the used and remaining capacity from the Recon cluster state. The threshold values are in percent.",
         "interval": 2,
         "scope": "SERVICE",
         "enabled": true,
+        "ignore_host": true,
         "source": {
           "type": "SCRIPT",
           "path": "ODP/1.0/services/OZONE/package/alerts/alert_ozone.py",
@@ -96,7 +97,7 @@
             {
               "name": "capacity.used.warning.threshold",
               "display_name": "Ozone Used Capacity Warning",
-              "value": 200,
+              "value": 80,
               "type": "PERCENT",
               "description": "The percentage of used capacity to trigger a warning alert.",
               "units": "%",
@@ -105,11 +106,11 @@
             {
               "name": "capacity.used.critical.threshold",
               "display_name": "Ozone Used Capacity Critical",
-              "value": 200,
+              "value": 90,
               "type": "PERCENT",
               "description": "The percentage of used capacity to trigger a critical alert.",
               "units": "%",
-              "threshold": "WARNING"
+              "threshold": "CRITICAL"
             }
           ]
         }
@@ -117,29 +118,30 @@
       {
         "name": "datanode_health_summary",
         "label": "DataNode Health Summary",
-        "description": "This service-level alert is triggered if there are unhealthy DataNodes",
+        "description": "This service-level alert is triggered if there are unhealthy DataNodes. It reads the DataNode counts from the Recon cluster state.",
         "interval": 1,
         "scope": "SERVICE",
         "enabled": true,
+        "ignore_host": true,
         "source": {
           "type": "SCRIPT",
           "path": "ODP/1.0/services/OZONE/package/alerts/alert_ozone.py",
           "parameters": [
             {
               "name": "health.datanode.warning",
-              "display_name": "Ozone DataNode num dead Warning",
+              "display_name": "Unhealthy DataNodes Warning",
               "value": 1.0,
               "type": "NUMERIC",
-              "description": "The percentage of used capacity to trigger a warning alert.",
+              "description": "The number of DataNodes that are not healthy to trigger a warning alert.",
               "threshold": "WARNING"
             },
             {
               "name": "health.datanode.warning.critical",
-              "display_name": "Ozone Used Capacity Critical",
+              "display_name": "Unhealthy DataNodes Critical",
               "value": 2.0,
-              "description": "The percentage of used capacity to trigger a critical alert.",
-              "units": "%",
-              "threshold": "WARNING"
+              "type": "NUMERIC",
+              "description": "The number of DataNodes that are not healthy to trigger a critical alert.",
+              "threshold": "CRITICAL"
             }
           ]
         }
@@ -314,7 +316,7 @@
       {
         "name": "datanode_storage",
         "label": "DataNode Storage",
-        "description": "This host-level alert is triggered if storage capacity if full on the DataNode. It checks the DataNode JMX Servlet for the Capacity and Remaining properties. The threshold values are in percent.",
+        "description": "This host-level alert is triggered if the storage capacity is full on the DataNode. It checks the file systems holding the DataNode data directories. The threshold values are in percent.",
         "interval": 2,
         "scope": "HOST",
         "enabled": true,
@@ -338,7 +340,7 @@
               "type": "PERCENT",
               "description": "The percentage of used capacity to trigger a critical alert.",
               "units": "%",
-              "threshold": "WARNING"
+              "threshold": "CRITICAL"
             }
           ]
         }
